@@ -3,7 +3,8 @@
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/**/build/
-
+!_nf_extract/
+!net/
 ### IntelliJ IDEA ###
 .idea/
 *.iws
