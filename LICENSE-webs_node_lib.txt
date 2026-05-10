@@ -1,9 +1,14 @@
+Web's Node Lib - vendored dependency
+====================================
+Source repository: https://github.com/webyep-art/webs_node_lib
+Author: webyep (see upstream README)
+SPDX-License-Identifier: MIT
+
+The following notice is reproduced from the upstream LICENSE file:
+
 MIT License
 
-Copyright (c) 2023 NeoForged project
-
-This license applies to the template files as supplied by github.com/NeoForged/MDK
-
+Copyright (c) 2026 Developer
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

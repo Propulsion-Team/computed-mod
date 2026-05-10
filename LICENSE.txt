@@ -1,0 +1,10 @@
+Asset License: All Rights Reserved (ARR)
+
+"Assets" refers to any visual material included in this package, such as textures, models, and other artwork.
+
+All rights reserved. Use, copying, modification, merging, publishing, distribution, sublicensing, and/or selling of assets in this package is not permitted without explicit prior written permission from the copyright holder.
+
+Code License: GNU General Public License v3.0 (GPL-3.0)
+
+This code is licensed under the GNU GPL v3.0.
+See https://www.gnu.org/licenses/gpl-3.0.en.html for details.

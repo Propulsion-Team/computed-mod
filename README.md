@@ -1,25 +1,12 @@
+# Computed
+In da works
 
-Installation information
-=======
 
-This template repository can be directly cloned to get you started with a new
-mod. Simply create a new repository cloned from this one, by following the
-instructions provided by [GitHub](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+# Credits – Third-Party Code
 
-Once you have your clone, simply open the repository in the IDE of your choice. The usual recommendation for an IDE is either IntelliJ IDEA or Eclipse.
+This project makes use of **Web's Node Lib** — a node-based GUI library for Minecraft 1.21.1 (NeoForge). The library is integrated under the terms of the MIT License. Note: Any modifications or additional assets we've made are governed by our own license; please refer to the main [LICENSE](LICENSE.txt) for details.
 
-If at any point you are missing libraries in your IDE, or you've run into problems you can
-run `gradlew --refresh-dependencies` to refresh the local cache. `gradlew clean` to reset everything 
-{this does not affect your code} and then start the process again.
-
-Mapping Names:
-============
-By default, the MDK is configured to use the official mapping names from Mojang for methods and fields 
-in the Minecraft codebase. These names are covered by a specific license. All modders should be aware of this
-license. For the latest license text, refer to the mapping file itself, or the reference copy here:
-https://github.com/NeoForged/NeoForm/blob/main/Mojang.md
-
-Additional Resources: 
-==========
-Community Documentation: https://docs.neoforged.net/  
-NeoForged Discord: https://discord.neoforged.net/
+**Web's Node Lib**  
+• **Repository:** [webyep-art/webs_node_lib](https://github.com/webyep-art/webs_node_lib)  
+• **Author:** webyep  
+• **License text:** See `LICENSE-webs_node_lib.txt` (included in this repository)

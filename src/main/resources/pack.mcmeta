@@ -1,0 +1,6 @@
+{
+  "pack": {
+    "description": "Computed mod resources (includes vendored Web's Node Lib UI assets namespace)",
+    "pack_format": 34
+  }
+}

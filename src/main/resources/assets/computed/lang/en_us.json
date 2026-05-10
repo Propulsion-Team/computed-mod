@@ -1,13 +1,10 @@
 {
-  "itemGroup.computed": "Example Mod Tab",
-  "block.computed.example_block": "Example Block",
-  "item.computed.example_item": "Example Item",
+  "itemGroup.computed": "Computed",
+  "block.computed.computer": "Computer",
+  "item.computed.antenna": "Antenna",
+  "item.computed.redstone_emitter": "Redstone emitter",
 
   "computed.configuration.title": "Computed Configs",
   "computed.configuration.section.computed.common.toml": "Computed Configs",
-  "computed.configuration.section.computed.common.toml.title": "Computed Configs",
-  "computed.configuration.items": "Item List",
-  "computed.configuration.logDirtBlock": "Log Dirt Block",
-  "computed.configuration.magicNumberIntroduction": "Magic Number Text",
-  "computed.configuration.magicNumber": "Magic Number"
+  "computed.configuration.section.computed.common.toml.title": "Computed Configs"
 }
