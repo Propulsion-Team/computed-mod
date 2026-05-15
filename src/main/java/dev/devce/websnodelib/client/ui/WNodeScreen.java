@@ -3,6 +3,7 @@ package dev.devce.websnodelib.client.ui;
 
 import dev.devce.websnodelib.api.FunctionCardNode;
 import dev.devce.websnodelib.api.FunctionDefinitionStore;
+import dev.devce.websnodelib.api.UiKeyTextures;
 import dev.devce.websnodelib.api.FunctionEndNode;
 import dev.devce.websnodelib.api.FunctionStartNode;
 import dev.devce.websnodelib.api.NodeMenuRegistry;
@@ -14,8 +15,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
 import java.io.IOException;
@@ -34,9 +38,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -91,10 +98,18 @@ public class WNodeScreen extends Screen {
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/folder_multicolor.png");
     private static final ResourceLocation ICON_UPLOAD =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/upload_multicolor.png");
+    private static final ResourceLocation ICON_SCROLLER_MULTICOLOR =
+            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/scroller_multicolor.png");
+    private static final ResourceLocation ICON_SCROLLER_DISABLED =
+            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/scroller_disabled.png");
     private static final ResourceLocation ICON_UI_CLICK =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/click.png");
     private static final ResourceLocation ICON_UI_DOUBLE_CLICK =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/double_click.png");
+    private static final ResourceLocation KEY_CAP_ALT = UiKeyTextures.key("alt");
+    private static final ResourceLocation KEY_CAP_DEL = UiKeyTextures.key("del");
+    private static final ResourceLocation KEY_CAP_X = UiKeyTextures.key("x");
+    private static final ResourceLocation KEY_CAP_ESC = UiKeyTextures.key("esc");
     private static final ResourceLocation SECTION_TOOL_TYPE =
             ResourceLocation.fromNamespaceAndPath("websnodelib", "tool_section");
 
@@ -103,6 +118,12 @@ public class WNodeScreen extends Screen {
 
     /** Null outside {@link dev.propulsionteam.computed.client.ComputerEditorScreen}. */
     protected final FunctionDefinitionStore functionStore;
+
+    /**
+     * When non-null, {@link #isEditorPeripheralLocked} is true if this predicate holds for the node type id
+     * (Computed: peripheral item not in computer inventory). Null in standalone / demo editor.
+     */
+    private final Predicate<ResourceLocation> editorPeripheralLocked;
 
     private boolean functionPickerOpen;
 
@@ -157,8 +178,14 @@ public class WNodeScreen extends Screen {
     /** Section position when header drag began; member nodes use original graph pos + (new - start). */
     private int sectionDragStartSectionX = 0;
     private int sectionDragStartSectionY = 0;
+    /** Last total delta applied to waypoints during this section drag (see {@link #sectionDragPrevTotalDy}). */
+    private int sectionDragPrevTotalDx = 0;
+    private int sectionDragPrevTotalDy = 0;
     private final List<UUID> sectionDragMemberNodes = new ArrayList<>();
     private final Map<UUID, int[]> sectionDragOriginalNodePos = new HashMap<>();
+    /** Nested sections fully inside the dragged band; move with the parent on drag. */
+    private final List<WGraph.WSection> sectionDragChildSections = new ArrayList<>();
+    private final Map<UUID, int[]> sectionDragOriginalNestedSectionPos = new HashMap<>();
 
     private enum SectionResizeHandle {
         NONE, E, S, W, SE, SW
@@ -186,6 +213,29 @@ public class WNodeScreen extends Screen {
     private int pendingWireFrozenTx;
     private int pendingWireFrozenTy;
     private int mouseX, mouseY;
+
+    /** Editor spline: hover and drag state (graph space). */
+    private enum WireHoverKind {
+        NONE,
+        WAYPOINT,
+        /** Near curve with a valid midpoint for adding a waypoint (ghost shown). */
+        INSERT_GHOST,
+        /** Near curve (e.g. Alt+delete wire) but not a valid add point. */
+        CURVE_ONLY
+    }
+
+    private static final int[] WIRE_ARGB_PALETTE = {
+        0xAA00FF88, 0xAA6B9CFF, 0xFFFFB84D, 0xFFFF6B9A, 0xAA3DFFDA, 0xFFFF9B6B
+    };
+    private static final int WIRE_INSERT_GHOST_ARGB = 0xEE66EEFF;
+    private WireHoverKind wireHoverKind = WireHoverKind.NONE;
+    private int wireHoverConnIdx = -1;
+    private int wireHoverWaypointIdx;
+    private int wireHoverInsertSeg;
+    private int wireHoverInsertGx;
+    private int wireHoverInsertGy;
+    private int draggingWireConnIdx = -1;
+    private int draggingWireWaypointIdx = -1;
     
     // Selection state
     private boolean isSelecting = false;
@@ -206,6 +256,11 @@ public class WNodeScreen extends Screen {
     private static final int FUNCTION_LIB_TITLE_H = 11;
     private static final int FUNCTION_LIB_NAME_ROW_H = 13;
     private static final int FUNCTION_LIB_VISIBLE_ROWS = 5;
+    /** Inset vertical scrollbar column width (function list, import flyout, item picker). */
+    private static final int SCROLLER_TRACK_W = 9;
+    /** Native size of {@link #ICON_SCROLLER_MULTICOLOR} / {@link #ICON_SCROLLER_DISABLED} (see assets). */
+    private static final int SCROLLER_TEX_W = 6;
+    private static final int SCROLLER_TEX_H = 15;
     /** Footer hint icons (scaled up from {@link #ICON_SIZE} atlas cells). */
     private static final int LIBRARY_HINT_ICON = 20;
     /** Two stacked hint rows + gap (see {@link #drawFunctionLibraryFooterHints}). */
@@ -228,6 +283,18 @@ public class WNodeScreen extends Screen {
     private int sectionPickA = 0x22;
     /** 0–3 = R,G,B,A slider drag; -1 = none. */
     private int sectionPickDragChannel = -1;
+
+    /** {@link dev.devce.websnodelib.api.elements.WItemPickSlot} uses this host to open the picker. */
+    private static WNodeScreen activeItemPickHost;
+
+    private boolean itemPickerOpen;
+    private String itemPickerQuery = "";
+    private int itemPickerScroll;
+    private java.util.function.Consumer<ItemStack> itemPickerCallback;
+    private static final int ITEM_PICK_PANEL_W = 228;
+    private static final int ITEM_PICK_ROW_H = 20;
+    private static final int ITEM_PICK_VISIBLE_ROWS = 9;
+    private final List<ItemStack> itemPickCandidates = new ArrayList<>();
 
     // Animation and Effects
     private float screenAnimation = 0.0f;
@@ -350,13 +417,79 @@ public class WNodeScreen extends Screen {
     }
 
     public WNodeScreen(WGraph graph) {
-        this(graph, null);
+        this(graph, null, null);
     }
 
     public WNodeScreen(WGraph graph, FunctionDefinitionStore functionStore) {
+        this(graph, functionStore, null);
+    }
+
+    public WNodeScreen(
+            WGraph graph, FunctionDefinitionStore functionStore, Predicate<ResourceLocation> editorPeripheralLocked) {
         super(Component.literal("Web's Node Editor"));
         this.graph = graph;
         this.functionStore = functionStore;
+        this.editorPeripheralLocked = editorPeripheralLocked;
+    }
+
+    /** True when the computer editor should show hardware-missing treatment for this node type. */
+    protected boolean isEditorPeripheralLocked(ResourceLocation nodeTypeId) {
+        return editorPeripheralLocked != null && editorPeripheralLocked.test(nodeTypeId);
+    }
+
+    /**
+     * When true, the function library row is dimmed and cannot be placed (graph body references a peripheral
+     * not installed on the computer).
+     */
+    protected boolean isFunctionLibraryDefinitionHardwareLocked(FunctionDefinitionStore.Definition def) {
+        return false;
+    }
+
+    /**
+     * Shown above the function library when the physical computer has in-world linked peripherals (Computed only).
+     */
+    protected List<Component> placedPeripheralHudLines() {
+        return List.of();
+    }
+
+    private int functionPickerPlacedSectionHeight() {
+        List<Component> lines = placedPeripheralHudLines();
+        if (lines.isEmpty()) {
+            return 0;
+        }
+        int lh = font != null ? font.lineHeight : 9;
+        return FUNCTION_LIB_TITLE_H + lines.size() * lh + 4;
+    }
+
+    private boolean innerGraphHasLockedPeripheral(WGraph g) {
+        for (WNode n : g.getNodes()) {
+            if (isEditorPeripheralLocked(n.getTypeId())) {
+                return true;
+            }
+            if (n instanceof FunctionCardNode fc && innerGraphHasLockedPeripheral(fc.getInnerGraph())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void drawEditorPeripheralLockOverlay(GuiGraphics graphics, WNode node) {
+        int x = node.getX();
+        int y = node.getY();
+        int w = node.getWidth();
+        int h = node.getHeight();
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 5);
+        graphics.fill(x, y, x + w, y + h, 0xD0220808);
+        graphics.renderOutline(x, y, w, h, 0xFFFF5555);
+        graphics.renderOutline(x + 1, y + 1, w - 2, h - 2, 0x88FF3333);
+        String msg = Component.translatable("gui.computed.peripheral_not_available").getString();
+        int tw = font.width(msg);
+        int tx = x + (w - tw) / 2;
+        int ty = y + (h - font.lineHeight) / 2;
+        graphics.drawString(font, msg, tx + 1, ty + 1, 0xFF000000, false);
+        graphics.drawString(font, msg, tx, ty, 0xFFFFE0E0, false);
+        graphics.pose().popPose();
     }
 
     private void enterFunctionGraphEdit(FunctionCardNode host) {
@@ -433,6 +566,9 @@ public class WNodeScreen extends Screen {
         }
         nestedFunctionTestPlaying = false;
         persistEditorViewport(editorViewportContextKey());
+        if (functionStore != null) {
+            syncCurrentNestedFunctionToStore();
+        }
         FunctionEditFrame f = functionEditStack.pop();
         graph = f.parentGraph();
         if (functionStore != null) {
@@ -517,8 +653,11 @@ public class WNodeScreen extends Screen {
 
     @Override
     public void tick() {
+        double editorStep = 1.0 / (double) WGraph.MAX_TICK_RATE;
         if (nestedFunctionTestPlaying && functionStore != null && isEditingNestedFunction()) {
-            graph.advanceSimulationInWorld(1.0 / WGraph.MAX_TICK_RATE);
+            graph.advanceSimulationInWorld(editorStep);
+        } else {
+            graph.advanceSimulation(editorStep);
         }
         super.tick();
     }
@@ -627,32 +766,51 @@ public class WNodeScreen extends Screen {
         selectedSectionId = null;
     }
 
+    /** Section title bar only (same 16px band as the painted header); not the body below. */
     private WGraph.WSection findSectionAt(int nx, int ny) {
-        List<WGraph.WSection> sections = graph.getSections();
-        for (int i = sections.size() - 1; i >= 0; i--) {
-            WGraph.WSection s = sections.get(i);
-            if (nx >= s.getX() && nx <= s.getX() + s.getWidth() && ny >= s.getY() && ny <= s.getY() + 16) {
-                return s;
+        WGraph.WSection best = null;
+        int bestLayer = Integer.MIN_VALUE;
+        int bestArea = Integer.MAX_VALUE;
+        for (WGraph.WSection s : graph.getSections()) {
+            if (nx < s.getX() || nx > s.getX() + s.getWidth() || ny < s.getY() || ny > s.getY() + 16) {
+                continue;
+            }
+            int layer = s.getLayer();
+            int area = s.getWidth() * s.getHeight();
+            if (layer > bestLayer || (layer == bestLayer && area < bestArea)) {
+                best = s;
+                bestLayer = layer;
+                bestArea = area;
             }
         }
-        return null;
+        return best;
     }
 
-    /** Full section bounds (topmost under point). */
-    private WGraph.WSection findSectionContaining(int nx, int ny) {
-        List<WGraph.WSection> sections = graph.getSections();
-        for (int i = sections.size() - 1; i >= 0; i--) {
-            WGraph.WSection s = sections.get(i);
-            if (nx >= s.getX() && nx <= s.getX() + s.getWidth() && ny >= s.getY() && ny <= s.getY() + s.getHeight()) {
-                return s;
-            }
+    private static List<WGraph.WSection> sectionsSortedByLayer(List<WGraph.WSection> src) {
+        List<WGraph.WSection> list = new ArrayList<>(src);
+        list.sort(
+                Comparator.comparingInt(WGraph.WSection::getLayer)
+                        .thenComparing(s -> s.getName(), String.CASE_INSENSITIVE_ORDER));
+        return list;
+    }
+
+    /**
+     * {@code inner}'s rectangle is fully inside {@code outer}'s (different ids). Used for nested “layer”
+     * sections: copy, drag, and delete move the subtree together.
+     */
+    private static boolean sectionFullyContainedIn(WGraph.WSection inner, WGraph.WSection outer) {
+        if (inner.getId().equals(outer.getId())) {
+            return false;
         }
-        return null;
+        return inner.getX() >= outer.getX()
+                && inner.getY() >= outer.getY()
+                && inner.getX() + inner.getWidth() <= outer.getX() + outer.getWidth()
+                && inner.getY() + inner.getHeight() <= outer.getY() + outer.getHeight();
     }
 
     private int sectionHeaderArgb(WGraph.WSection s, boolean renaming, boolean selected) {
         if (renaming) {
-            return 0xEE101828;
+            return 0xEE102018;
         }
         int b = s.getBodyColorArgb();
         int r = (b >> 16) & 0xFF;
@@ -857,6 +1015,158 @@ public class WNodeScreen extends Screen {
         graphics.drawString(font, "Cancel", px + 138, by + 3, 0xFFE0E0E8, false);
         graphics.drawString(font, "Reset theme default", px + 12, py + SECTION_COLOR_PICKER_H - 11, 0xFF8A9AB8, false);
         graphics.pose().popPose();
+    }
+
+    /** Called from {@link dev.devce.websnodelib.api.elements.WItemPickSlot} when a node editor is open. */
+    public static void requestItemPick(Consumer<ItemStack> onChosen) {
+        if (activeItemPickHost == null || onChosen == null) {
+            return;
+        }
+        activeItemPickHost.openItemPicker(onChosen);
+    }
+
+    private void openItemPicker(Consumer<ItemStack> onChosen) {
+        itemPickerOpen = true;
+        itemPickerQuery = "";
+        itemPickerScroll = 0;
+        itemPickerCallback = onChosen;
+        rebuildItemPickCandidates();
+        playUiClick(1.01f);
+    }
+
+    private void closeItemPicker() {
+        itemPickerOpen = false;
+        itemPickerCallback = null;
+        itemPickCandidates.clear();
+    }
+
+    private void rebuildItemPickCandidates() {
+        itemPickCandidates.clear();
+        String q = itemPickerQuery.trim().toLowerCase();
+        for (Item it : BuiltInRegistries.ITEM) {
+            ItemStack st = it.getDefaultInstance();
+            if (st.isEmpty()) {
+                continue;
+            }
+            ResourceLocation id = BuiltInRegistries.ITEM.getKey(it);
+            String ids = id.toString().toLowerCase();
+            if (!q.isEmpty() && !ids.contains(q)) {
+                continue;
+            }
+            itemPickCandidates.add(st);
+            if (itemPickCandidates.size() >= 400) {
+                break;
+            }
+        }
+    }
+
+    private int itemPickerPanelH() {
+        return menuHeaderHeight() + 16 + ITEM_PICK_VISIBLE_ROWS * ITEM_PICK_ROW_H + menuRowHeight() + 6;
+    }
+
+    private int itemPickerPanelX() {
+        return Mth.clamp(width / 2 - ITEM_PICK_PANEL_W / 2, menuEdgeLeft(), menuEdgeRight() - ITEM_PICK_PANEL_W);
+    }
+
+    private int itemPickerPanelY() {
+        return Mth.clamp(height / 5, menuEdgeTop(), menuEdgeBottom() - itemPickerPanelH());
+    }
+
+    private boolean itemPickerContains(double mx, double my) {
+        if (!itemPickerOpen) {
+            return false;
+        }
+        int px = itemPickerPanelX();
+        int py = itemPickerPanelY();
+        return mx >= px && mx < px + ITEM_PICK_PANEL_W && my >= py && my < py + itemPickerPanelH();
+    }
+
+    private void renderItemPickerOverlay(GuiGraphics graphics) {
+        if (!itemPickerOpen) {
+            return;
+        }
+        graphics.pose().pushPose();
+        graphics.pose().translate(0f, 0f, 5200f);
+        graphics.fill(0, 0, width, height, 0x88000000);
+        int px = itemPickerPanelX();
+        int py = itemPickerPanelY();
+        int ph = itemPickerPanelH();
+        drawMenuPanel(graphics, px, py, ITEM_PICK_PANEL_W, ph);
+        graphics.drawString(font, "Pick item (frequency)", px + 6, py + 5, 0xFF669966, false);
+        int lineY = py + menuHeaderHeight();
+        graphics.drawString(font, "> " + itemPickerQuery + "_", px + 6, lineY, 0xFF00FF88, false);
+        int listTop = lineY + 14;
+        int listH = ITEM_PICK_VISIBLE_ROWS * ITEM_PICK_ROW_H;
+        int itemListRight = px + ITEM_PICK_PANEL_W - 2 - SCROLLER_TRACK_W;
+        int vis = Math.min(ITEM_PICK_VISIBLE_ROWS, Math.max(0, itemPickCandidates.size() - itemPickerScroll));
+        graphics.enableScissor(px + 2, listTop, itemListRight, listTop + listH);
+        for (int row = 0; row < vis; row++) {
+            int idx = itemPickerScroll + row;
+            if (idx >= itemPickCandidates.size()) {
+                break;
+            }
+            ItemStack st = itemPickCandidates.get(idx);
+            int ry = listTop + row * ITEM_PICK_ROW_H;
+            boolean hr =
+                    mouseX >= px
+                            && mouseX < itemListRight
+                            && mouseY >= ry
+                            && mouseY < ry + ITEM_PICK_ROW_H;
+            if (hr) {
+                graphics.fill(px + 2, ry, itemListRight, ry + ITEM_PICK_ROW_H - 1, 0x4400FF88);
+            }
+            graphics.renderItem(st, px + 6, ry + 2);
+            String nm = st.getHoverName().getString();
+            int maxNmPx = Math.max(font.width("…"), itemListRight - (px + 28) - 4);
+            if (font.width(nm) > maxNmPx) {
+                String ell = "…";
+                while (nm.length() > 1 && font.width(nm.substring(0, nm.length() - 1) + ell) > maxNmPx) {
+                    nm = nm.substring(0, nm.length() - 1);
+                }
+                nm = nm + ell;
+            }
+            graphics.drawString(font, nm, px + 28, ry + 6, 0xFFD0D8EE, false);
+        }
+        graphics.disableScissor();
+        drawInsetVerticalScroller(
+                graphics,
+                px + ITEM_PICK_PANEL_W - 2 - SCROLLER_TRACK_W,
+                listTop,
+                listH,
+                itemPickerScroll,
+                itemPickCandidates.size(),
+                ITEM_PICK_VISIBLE_ROWS);
+        int footY = listTop + ITEM_PICK_VISIBLE_ROWS * ITEM_PICK_ROW_H + 2;
+        graphics.drawString(font, "Esc: cancel   Enter: top match", px + 6, footY, 0xFF888888, false);
+        graphics.pose().popPose();
+    }
+
+    private boolean handleItemPickerClick(double mouseX, double mouseY, int button) {
+        if (!itemPickerOpen) {
+            return false;
+        }
+        if (itemPickerContains(mouseX, mouseY)) {
+            if (button == 0) {
+                int listTop = itemPickerPanelY() + menuHeaderHeight() + 14;
+                int row = (int) ((mouseY - listTop) / ITEM_PICK_ROW_H);
+                if (row >= 0 && row < ITEM_PICK_VISIBLE_ROWS) {
+                    int idx = itemPickerScroll + row;
+                    if (idx >= 0 && idx < itemPickCandidates.size()) {
+                        ItemStack picked = itemPickCandidates.get(idx).copyWithCount(1);
+                        if (itemPickerCallback != null) {
+                            itemPickerCallback.accept(picked);
+                        }
+                        closeItemPicker();
+                        playUiClick(1.04f);
+                        return true;
+                    }
+                }
+            }
+            return true;
+        }
+        closeItemPicker();
+        playUiClick(0.92f);
+        return true;
     }
 
     private int sectionResizeHitSlop() {
@@ -1254,7 +1564,7 @@ public class WNodeScreen extends Screen {
                 graphics.fill(left, ly, right, ly + Math.max(8, font.lineHeight), 0x664A90FF);
             }
         }
-        graphics.drawString(font, sectionRenameBuffer, lx, ly, 0xFFEAF0FF, false);
+        graphics.drawString(font, sectionRenameBuffer, lx, ly, 0xFFCCEEDD, false);
         drawSectionRenameCaret(graphics, lx, ly, maxTextRight, sectionRenameBuffer.substring(0, sectionRenameCursor));
     }
 
@@ -1272,6 +1582,16 @@ public class WNodeScreen extends Screen {
         recordCheckpointBeforeEdit();
         WGraph.WSection s = new WGraph.WSection("Section " + sectionOrdinalCounter++, x1, y1, w, h);
         graph.getSections().add(s);
+        int parentMaxLayer = -1;
+        for (WGraph.WSection p : graph.getSections()) {
+            if (p.getId().equals(s.getId())) {
+                continue;
+            }
+            if (sectionFullyContainedIn(s, p)) {
+                parentMaxLayer = Math.max(parentMaxLayer, p.getLayer());
+            }
+        }
+        s.setLayer(parentMaxLayer < 0 ? 0 : parentMaxLayer + 1);
         selectedSectionId = s.getId();
         startSectionRename(s.getId(), s.getName());
         showSectionsSidebar = true;
@@ -1289,6 +1609,7 @@ public class WNodeScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        activeItemPickHost = this;
         if (editorFirstInit) {
             editorFirstInit = false;
             screenAnimation = 0;
@@ -1338,6 +1659,7 @@ public class WNodeScreen extends Screen {
             searchQuery = "";
             menuFlyoutPath.clear();
             clearStickyBrowseRoot();
+            closeItemPicker();
         } finally {
             historySuspended = false;
         }
@@ -1360,6 +1682,7 @@ public class WNodeScreen extends Screen {
             searchQuery = "";
             menuFlyoutPath.clear();
             clearStickyBrowseRoot();
+            closeItemPicker();
         } finally {
             historySuspended = false;
         }
@@ -1415,6 +1738,10 @@ public class WNodeScreen extends Screen {
     @Override
     public void removed() {
         clearPendingWireSpawn();
+        if (activeItemPickHost == this) {
+            activeItemPickHost = null;
+        }
+        closeItemPicker();
         super.removed();
     }
 
@@ -1442,7 +1769,6 @@ public class WNodeScreen extends Screen {
         if (wirePulseScroll > 8192f) {
             wirePulseScroll -= 8192f;
         }
-        graph.advanceSimulation(deltaTime);
 
         screenAnimation = Math.min(1.0f, screenAnimation + deltaTime / OPEN_DURATION_SEC);
         float ease = easeOutCubic(screenAnimation);
@@ -1469,9 +1795,18 @@ public class WNodeScreen extends Screen {
                     fnTitle = def.name();
                 }
             }
-            String hint = fnTitle + " - ESC: Go back";
-            int tw = font.width(hint);
-            graphics.drawString(font, hint, px1 + (px2 - px1 - tw) / 2, py1 + 4, 0xFF66CCAA, false);
+            String lead = fnTitle + " - ";
+            String tail = "Go back";
+            int keyDraw = 11;
+            int gap = 4;
+            int rowTop = py1 + 4;
+            int textY = rowTop + (keyDraw - font.lineHeight) / 2 + 1;
+            int totalW = font.width(lead) + keyDraw + gap + font.width(tail);
+            int startX = px1 + (px2 - px1 - totalW) / 2;
+            graphics.drawString(font, lead, startX, textY, 0xFF66CCAA, false);
+            int ix = startX + font.width(lead);
+            blitScaledHintTile(graphics, KEY_CAP_ESC, ix, rowTop, keyDraw);
+            graphics.drawString(font, tail, ix + keyDraw + gap, textY, 0xFF66CCAA, false);
         }
 
         for (int i = py1; i < py2; i += 2) {
@@ -1490,29 +1825,41 @@ public class WNodeScreen extends Screen {
 
         graphics.pose().translate(panX, panY, 0);
 
-        for (WGraph.WSection s : graph.getSections()) {
+        for (WGraph.WSection s : sectionsSortedByLayer(graph.getSections())) {
             boolean renaming = s.getId().equals(renamingSectionId);
             boolean secSel = s.getId().equals(selectedSectionId);
             int bg = s.getBodyColorArgb();
             graphics.fill(s.getX(), s.getY(), s.getX() + s.getWidth(), s.getY() + s.getHeight(), bg);
             int head = sectionHeaderArgb(s, renaming, secSel);
             graphics.fill(s.getX(), s.getY(), s.getX() + s.getWidth(), s.getY() + 16, head);
-            int outline = secSel ? 0xFF9CAFFF : 0xFF738BE2;
+            int outline = secSel ? 0xFF66CCAA : 0xFF448866;
             graphics.renderOutline(s.getX(), s.getY(), s.getWidth(), s.getHeight(), outline);
             int lx = s.getX() + 4;
             int ly = s.getY() + 4;
             if (renaming) {
                 drawSectionRenameTextWithSelectionAndCaret(graphics, lx, ly, s.getX() + s.getWidth() - 4);
             } else {
-                graphics.drawString(font, s.getName(), lx, ly, 0xFFEAF0FF, false);
+                graphics.drawString(font, s.getName(), lx, ly, 0xFFCCEEDD, false);
             }
             if (s.getId().equals(selectedSectionId)) {
                 drawSectionResizeHandles(graphics, s);
             }
         }
 
+        int gmx = screenToGraphX(mouseX);
+        int gmy = screenToGraphY(mouseY);
+        if (!isSearching
+                && linkingNode == null
+                && draggingWireConnIdx < 0
+                && !isCreatingSection
+                && isInsideEditorPanel(mouseX, mouseY)) {
+            updateWireInteractionHover(gmx, gmy);
+        } else {
+            clearWireHover();
+        }
+        int wi = 0;
         for (WConnection conn : graph.getConnections()) {
-            drawConnection(graphics, conn);
+            drawConnection(graphics, conn, wi++);
         }
 
         if (linkingNode != null) {
@@ -1534,6 +1881,13 @@ public class WNodeScreen extends Screen {
             graphics.pose().pushPose();
             graphics.pose().translate(0, 0, z++ * 10);
             node.render(graphics, screenToGraphX(mouseX), screenToGraphY(mouseY), partialTick);
+            if (node instanceof FunctionCardNode fc) {
+                if (innerGraphHasLockedPeripheral(fc.getInnerGraph())) {
+                    drawEditorPeripheralLockOverlay(graphics, node);
+                }
+            } else if (isEditorPeripheralLocked(node.getTypeId())) {
+                drawEditorPeripheralLockOverlay(graphics, node);
+            }
             graphics.pose().popPose();
         }
 
@@ -1591,6 +1945,8 @@ public class WNodeScreen extends Screen {
 
         graphics.pose().popPose();
 
+        renderItemPickerOverlay(graphics);
+
         if (newFunctionNamingOpen) {
             graphics.pose().pushPose();
             graphics.pose().translate(0, 0, 5200);
@@ -1632,26 +1988,26 @@ public class WNodeScreen extends Screen {
         int y = sectionsSidebarY();
         int w = sectionsSidebarW();
         int h = sectionsSidebarH();
-        graphics.fill(x, y, x + w, y + h, ((int) (220 * ease) << 24) | 0x151820);
-        graphics.renderOutline(x, y, w, h, 0xFF6173B8);
-        graphics.drawString(font, "Sections (F2 rename)", x + 6, y + 4, 0xFFE0E7FF, false);
+        graphics.fill(x, y, x + w, y + h, ((int) (220 * ease) << 24) | 0x121814);
+        graphics.renderOutline(x, y, w, h, 0xFF3D8B6A);
+        graphics.drawString(font, "Sections", x + 6, y + 4, 0xFFAAE8C8, false);
         int ry = y + 18;
-        for (WGraph.WSection s : graph.getSections()) {
+        for (WGraph.WSection s : sectionsSortedByLayer(graph.getSections())) {
             if (ry + 14 > y + h - 4) {
                 break;
             }
             boolean renaming = s.getId().equals(renamingSectionId);
             boolean selected = s.getId().equals(selectedSectionId);
             if (renaming) {
-                graphics.fill(x + 2, ry - 1, x + w - 2, ry + 12, 0xEE080E14);
+                graphics.fill(x + 2, ry - 1, x + w - 2, ry + 12, 0xEE081A12);
             } else if (selected) {
-                graphics.fill(x + 2, ry - 1, x + w - 2, ry + 12, 0x445C74CC);
+                graphics.fill(x + 2, ry - 1, x + w - 2, ry + 12, 0x552A6644);
             }
             int lx = x + 6;
             if (renaming) {
                 drawSectionRenameTextWithSelectionAndCaret(graphics, lx, ry, x + w - 6);
             } else {
-                int textColor = selected ? 0xFFFFFFFF : 0xFFAFB7D0;
+                int textColor = selected ? 0xFFE8FFF4 : 0xFF9AB8A8;
                 graphics.drawString(font, s.getName(), lx, ry, textColor, false);
             }
             ry += 13;
@@ -1689,6 +2045,7 @@ public class WNodeScreen extends Screen {
         }
         int rh = menuRowHeight();
         return 12
+                + functionPickerPlacedSectionHeight()
                 + FUNCTION_LIB_TITLE_H
                 + rh
                 + FUNCTION_LIB_VISIBLE_ROWS * FUNCTION_LIB_NAME_ROW_H
@@ -1698,7 +2055,7 @@ public class WNodeScreen extends Screen {
     }
 
     private int functionPickerDefsStartY(int panelTop) {
-        return panelTop + 6 + FUNCTION_LIB_TITLE_H + menuRowHeight();
+        return panelTop + 6 + functionPickerPlacedSectionHeight() + FUNCTION_LIB_TITLE_H + menuRowHeight();
     }
 
     private int functionPickerFolderRowY(int panelTop) {
@@ -1893,17 +2250,18 @@ public class WNodeScreen extends Screen {
         }
         int footerGap = nf > vis ? 12 : 0;
         int listClipBottom = contentTop + vis * rowH;
-        graphics.enableScissor(fx + 1, contentTop, fx + fw - 1, listClipBottom);
+        int flyListRight = fx + fw - 2 - SCROLLER_TRACK_W;
+        graphics.enableScissor(fx + 1, contentTop, flyListRight, listClipBottom);
         int show = Math.min(vis, Math.max(0, nf - functionDiscImportListScroll));
         for (int j = 0; j < show; j++) {
             Path fp = functionDiscImportFiles.get(functionDiscImportListScroll + j);
             int rowY = contentTop + j * rowH;
             boolean hr = mx >= fx && mx < fx + fw && my >= rowY && my < rowY + rowH;
             if (hr) {
-                graphics.fill(fx + 1, rowY, fx + fw - 1, rowY + rowH, 0x4400FF88);
+                graphics.fill(fx + 1, rowY, flyListRight, rowY + rowH, 0x4400FF88);
             }
             String name = fp.getFileName().toString();
-            int mw = fw - 12;
+            int mw = flyListRight - fx - 10;
             if (font.width(name) > mw) {
                 while (name.length() > 2 && font.width(name + "…") > mw) {
                     name = name.substring(0, name.length() - 1);
@@ -1913,6 +2271,14 @@ public class WNodeScreen extends Screen {
             graphics.drawString(font, name, fx + 6, rowY + 1, 0xFFEAF0FF, false);
         }
         graphics.disableScissor();
+        drawInsetVerticalScroller(
+                graphics,
+                fx + fw - 2 - SCROLLER_TRACK_W,
+                contentTop,
+                vis * rowH,
+                functionDiscImportListScroll,
+                nf,
+                vis);
         if (footerGap > 0) {
             int from = functionDiscImportListScroll + 1;
             int to = functionDiscImportListScroll + show;
@@ -1942,17 +2308,27 @@ public class WNodeScreen extends Screen {
             int ph = schematicPickerH();
             drawMenuPanel(graphics, px, py, pw, ph);
             int rh = menuRowHeight();
-            graphics.fill(px + 2, py + 2, px + pw - 2, py + 6 + FUNCTION_LIB_TITLE_H, 0x33101822);
-            int fnTitleY = py + 6;
-            graphics.drawString(font, "Functions", px + 6, fnTitleY, 0xFFAACCEE, false);
-            graphics.drawString(
-                    font,
-                    " · Scroll",
-                    px + 6 + font.width("Functions"),
-                    fnTitleY,
-                    0xFF8899AA,
-                    false);
-            int ry = py + 6 + FUNCTION_LIB_TITLE_H;
+            int placedH = functionPickerPlacedSectionHeight();
+            graphics.fill(px + 2, py + 2, px + pw - 2, py + 6 + placedH + FUNCTION_LIB_TITLE_H, 0x33101822);
+            int contentY = py + 6;
+            List<Component> placedLines = placedPeripheralHudLines();
+            if (!placedLines.isEmpty()) {
+                graphics.drawString(
+                        font,
+                        Component.translatable("gui.computed.placed_hardware_title"),
+                        px + 6,
+                        contentY,
+                        0xFF88DDAA,
+                        false);
+                contentY += FUNCTION_LIB_TITLE_H;
+                for (Component line : placedLines) {
+                    graphics.drawString(font, line, px + 8, contentY, 0xFFC0D8C0, false);
+                    contentY += font.lineHeight;
+                }
+                contentY += 4;
+            }
+            graphics.drawString(font, "Functions", px + 6, contentY, 0xFFAACCEE, false);
+            int ry = contentY + FUNCTION_LIB_TITLE_H;
             boolean hNew = mx >= px && mx < px + pw && my >= ry && my < ry + rh;
             int newColor = hNew ? 0xFFFFFFFF : 0xFF888888;
             if (hNew) {
@@ -1967,31 +2343,52 @@ public class WNodeScreen extends Screen {
             int nDefs = defs.size();
             functionLibraryListScroll =
                     Mth.clamp(functionLibraryListScroll, 0, Math.max(0, nDefs - FUNCTION_LIB_VISIBLE_ROWS));
-            graphics.enableScissor(px + 1, defsTop, px + pw - 1, defsTop + defsViewportH);
+            int defsListRight = px + pw - 2 - SCROLLER_TRACK_W;
+            graphics.enableScissor(px + 1, defsTop, defsListRight, defsTop + defsViewportH);
             int visibleDefRows = Math.min(FUNCTION_LIB_VISIBLE_ROWS, Math.max(0, nDefs - functionLibraryListScroll));
+            int defsTextMaxRight = defsListRight - 4;
             for (int j = 0; j < visibleDefRows; j++) {
                 FunctionDefinitionStore.Definition def = defs.get(functionLibraryListScroll + j);
                 int rowY = defsTop + j * FUNCTION_LIB_NAME_ROW_H;
                 boolean renaming = def.id().equals(renamingLibraryFunctionId);
                 boolean selected = def.id().equals(selectedLibraryFunctionId);
+                boolean hwLocked = isFunctionLibraryDefinitionHardwareLocked(def);
                 boolean hr =
                         mx >= px && mx < px + pw && my >= rowY && my < rowY + FUNCTION_LIB_NAME_ROW_H;
                 if (renaming) {
-                    graphics.fill(px + 2, rowY - 1, px + pw - 2, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0xEE080E14);
+                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0xEE080E14);
                 } else if (selected) {
-                    graphics.fill(px + 2, rowY - 1, px + pw - 2, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x445C74CC);
-                } else if (hr) {
-                    graphics.fill(px + 2, rowY - 1, px + pw - 2, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x3300AA66);
+                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x445C74CC);
+                } else if (hr && !hwLocked) {
+                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x3300AA66);
+                } else if (hwLocked) {
+                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x88201818);
                 }
                 int lx = px + 6;
                 if (renaming) {
-                    drawLibraryFnRenameTextWithSelectionAndCaret(graphics, lx, rowY, px + pw - 6);
+                    drawLibraryFnRenameTextWithSelectionAndCaret(graphics, lx, rowY, defsTextMaxRight);
                 } else {
-                    int tColor = selected ? 0xFFFFFFFF : 0xFFAFB7D0;
+                    int tColor =
+                            hwLocked ? 0xFF886666 : (selected ? 0xFFFFFFFF : 0xFFAFB7D0);
                     graphics.drawString(font, def.name(), lx, rowY, tColor, false);
+                    if (hwLocked) {
+                        String hint = Component.translatable("gui.computed.function_needs_peripheral").getString();
+                        int hx = defsTextMaxRight - font.width(hint);
+                        if (hx > lx + font.width(def.name()) + 4) {
+                            graphics.drawString(font, hint, hx, rowY, 0xFFFF6666, false);
+                        }
+                    }
                 }
             }
             graphics.disableScissor();
+            drawInsetVerticalScroller(
+                    graphics,
+                    px + pw - 2 - SCROLLER_TRACK_W,
+                    defsTop,
+                    defsViewportH,
+                    functionLibraryListScroll,
+                    nDefs,
+                    FUNCTION_LIB_VISIBLE_ROWS);
             ry = defsTop + defsViewportH;
             int folderY = functionPickerFolderRowY(py);
             boolean hFolder =
@@ -2038,30 +2435,92 @@ public class WNodeScreen extends Screen {
         }
     }
 
-    /**
-     * Single-tile UI icons are {@link #ICON_SIZE}; scaling via pose avoids sampling past the edge (which
-     * looked like a repeating grid when {@link #LIBRARY_HINT_ICON} was passed as both draw size and UV).
-     */
-    private void blitLibraryHintIcon(GuiGraphics graphics, ResourceLocation icon, int x, int y) {
+    /** Scales a 16×16 UI tile to {@code drawPx} for key caps and small icons. */
+    private void blitScaledHintTile(GuiGraphics graphics, ResourceLocation icon, int x, int y, int drawPx) {
         graphics.pose().pushPose();
         graphics.pose().translate(x, y, 0);
-        float s = LIBRARY_HINT_ICON / (float) ICON_SIZE;
+        float s = drawPx / (float) ICON_SIZE;
         graphics.pose().scale(s, s, 1.0f);
         graphics.blit(icon, 0, 0, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+        graphics.pose().popPose();
+    }
+
+    /**
+     * Inset vertical scrollbar track with a thumb from {@link #ICON_SCROLLER_MULTICOLOR} /
+     * {@link #ICON_SCROLLER_DISABLED}. The thumb uses uniform scale (aspect preserved), is horizontally
+     * centered in the pit, and is top-aligned in the proportional scroll slot (including when disabled).
+     * {@code scroll} and {@code totalItems} match list semantics (e.g. {@link #functionLibraryListScroll}).
+     */
+    private void drawInsetVerticalScroller(
+            GuiGraphics graphics, int trackLeft, int trackTop, int trackH, int scroll, int totalItems, int visibleRows) {
+        if (trackH < 10) {
+            return;
+        }
+        int trackW = SCROLLER_TRACK_W;
+        int trackRight = trackLeft + trackW;
+        int trackBottom = trackTop + trackH;
+        int edgeGray = 0xFF4a5260;
+        int pitBase = 0xFF0c0e14;
+        int bevelDark = 0xFF2a3038;
+        int bevelLight = 0xFF5a6270;
+        // 1px chrome on all sides so top/left read against the panel like bottom/right.
+        graphics.fill(trackLeft, trackTop, trackRight, trackTop + 1, edgeGray);
+        graphics.fill(trackLeft, trackBottom - 1, trackRight, trackBottom, edgeGray);
+        graphics.fill(trackLeft, trackTop + 1, trackLeft + 1, trackBottom - 1, edgeGray);
+        graphics.fill(trackRight - 1, trackTop + 1, trackRight, trackBottom - 1, edgeGray);
+        graphics.fill(trackLeft + 1, trackTop + 1, trackRight - 1, trackBottom - 1, pitBase);
+        // Inset pit: dark along top/left, light along bottom/right.
+        graphics.fill(trackLeft + 1, trackTop + 1, trackRight - 1, trackTop + 2, bevelDark);
+        graphics.fill(trackLeft + 1, trackTop + 2, trackLeft + 2, trackBottom - 1, bevelDark);
+        graphics.fill(trackLeft + 1, trackBottom - 2, trackRight - 1, trackBottom - 1, bevelLight);
+        graphics.fill(trackRight - 2, trackTop + 1, trackRight - 1, trackBottom - 1, bevelLight);
+        int pitX = trackLeft + 2;
+        int pitY = trackTop + 2;
+        int pitW = trackW - 4;
+        int pitH = trackH - 4;
+        if (pitW < 2 || pitH < 6) {
+            return;
+        }
+        graphics.fill(pitX, pitY, pitX + pitW, pitY + pitH, 0xFF080a10);
+        graphics.fill(pitX, pitY, pitX + pitW, pitY + pitH, 0xFF080a10);
+        boolean active = totalItems > visibleRows;
+        int maxScroll = Math.max(0, totalItems - visibleRows);
+        ResourceLocation tex = active ? ICON_SCROLLER_MULTICOLOR : ICON_SCROLLER_DISABLED;
+        float fracVisible = visibleRows / (float) Math.max(1, totalItems);
+        int slotH = active ? Mth.clamp(Mth.ceil(fracVisible * pitH), 8, pitH) : pitH;
+        int thumbTravel = pitH - slotH;
+        int slotY = pitY + (maxScroll <= 0 ? 0 : (int) Math.round(scroll * (thumbTravel / (float) maxScroll)));
+        float s = Math.min(pitW / (float) SCROLLER_TEX_W, slotH / (float) SCROLLER_TEX_H);
+        float drawW = SCROLLER_TEX_W * s;
+        float drawH = SCROLLER_TEX_H * s;
+        float ox = pitX + (pitW - drawW) / 2f;
+        // Top-align thumb in slot (including disabled full-track) so it never floats mid-track.
+        float oy = slotY;
+        graphics.pose().pushPose();
+        graphics.pose().translate(ox, oy, 0);
+        graphics.pose().scale(s, s, 1f);
+        graphics.blit(tex, 0, 0, 0, 0, SCROLLER_TEX_W, SCROLLER_TEX_H, SCROLLER_TEX_W, SCROLLER_TEX_H);
         graphics.pose().popPose();
     }
 
     private void drawFunctionLibraryFooterHints(GuiGraphics graphics, int x, int y) {
         int hintColor = 0xFF556677;
         int rowStride = LIBRARY_HINT_ICON + 4;
+        int tilePx = ICON_SIZE;
+        int keyGap = 2;
+        int iconStripW = tilePx + keyGap + tilePx;
+        int hintTextX = x + iconStripW + 6;
+        int iconY = y + (LIBRARY_HINT_ICON - tilePx) / 2;
         int ty1 = y + (LIBRARY_HINT_ICON - font.lineHeight) / 2 + 1;
-        blitLibraryHintIcon(graphics, ICON_UI_CLICK, x, y);
-        graphics.drawString(
-                font, "Place card", x + LIBRARY_HINT_ICON + 5, ty1, hintColor, false);
+        blitScaledHintTile(graphics, KEY_CAP_ALT, x, iconY, tilePx);
+        blitScaledHintTile(graphics, ICON_UI_CLICK, x + tilePx + keyGap, iconY, tilePx);
+        graphics.drawString(font, "Place card", hintTextX, ty1, hintColor, false);
         int y2 = y + rowStride;
+        int iconY2 = y2 + (LIBRARY_HINT_ICON - tilePx) / 2;
         int ty2 = y2 + (LIBRARY_HINT_ICON - font.lineHeight) / 2 + 1;
-        blitLibraryHintIcon(graphics, ICON_UI_DOUBLE_CLICK, x, y2);
-        graphics.drawString(font, "Rename", x + LIBRARY_HINT_ICON + 5, ty2, hintColor, false);
+        int doubleClickX = x + (iconStripW - tilePx) / 2;
+        blitScaledHintTile(graphics, ICON_UI_DOUBLE_CLICK, doubleClickX, iconY2, tilePx);
+        graphics.drawString(font, "Rename", hintTextX, ty2, hintColor, false);
     }
 
     private boolean nestedFunctionDiskToolbarVisible() {
@@ -2245,7 +2704,8 @@ public class WNodeScreen extends Screen {
         if (functionImportSubmenuOpen && !onImportRow) {
             functionImportSubmenuOpen = false;
         }
-        int titleEnd = py + 6 + FUNCTION_LIB_TITLE_H;
+        int placedH = functionPickerPlacedSectionHeight();
+        int titleEnd = py + 6 + placedH + FUNCTION_LIB_TITLE_H;
         int newTop = titleEnd;
         if (mouseY >= newTop && mouseY < newTop + rh) {
             commitLibraryFunctionRename();
@@ -2266,6 +2726,10 @@ public class WNodeScreen extends Screen {
                 return;
             }
             FunctionDefinitionStore.Definition def = defs.get(i);
+            if (isFunctionLibraryDefinitionHardwareLocked(def)) {
+                playUiClick(0.82f);
+                return;
+            }
             if (renamingLibraryFunctionId != null && !def.id().equals(renamingLibraryFunctionId)) {
                 commitLibraryFunctionRename();
             }
@@ -2307,6 +2771,13 @@ public class WNodeScreen extends Screen {
 
     private void placeFunctionCardFromLibrary(UUID functionId, double screenMx, double screenMy) {
         commitLibraryFunctionRename();
+        if (functionStore != null) {
+            FunctionDefinitionStore.Definition def = functionStore.get(functionId);
+            if (def != null && isFunctionLibraryDefinitionHardwareLocked(def)) {
+                playUiClick(0.82f);
+                return;
+            }
+        }
         int nx = screenToGraphX(screenMx);
         int ny = screenToGraphY(screenMy);
         recordCheckpointBeforeEdit();
@@ -2894,7 +3365,9 @@ public class WNodeScreen extends Screen {
             if (i == 0 || hovered) {
                 graphics.fill(menuX + 1, ry, menuX + mw - 1, ry + menuRowHeight(), 0x4400FF88);
             }
-            graphics.drawString(font, row.label(), menuX + 6, ry + 1, color, false);
+            boolean locked = isEditorPeripheralLocked(row.nodeType());
+            int rowColor = locked ? (hovered ? 0xFFCC8888 : 0xFF886666) : color;
+            graphics.drawString(font, row.label(), menuX + 6, ry + 1, rowColor, false);
         }
         if (searchHitRows.size() > visible) {
             graphics.drawString(
@@ -2942,7 +3415,9 @@ public class WNodeScreen extends Screen {
                         sub && showSubArrow ? Component.empty().append(c.label()).append(" ›") : c.label();
                 graphics.drawString(font, text, rx + 6, y0 + 1, color, false);
             } else if (row instanceof BrowseNodeRow n) {
-                graphics.drawString(font, n.label(), rx + 6, y0 + 1, color, false);
+                boolean locked = isEditorPeripheralLocked(n.nodeType());
+                int rowColor = locked ? (hovered ? 0xFFCC8888 : 0xFF886666) : color;
+                graphics.drawString(font, n.label(), rx + 6, y0 + 1, rowColor, false);
             }
             graphics.disableScissor();
         }
@@ -3037,19 +3512,256 @@ public class WNodeScreen extends Screen {
         graphics.pose().popPose();
     }
 
-    private void drawConnection(GuiGraphics graphics, WConnection conn) {
+    private void clearWireHover() {
+        wireHoverKind = WireHoverKind.NONE;
+        wireHoverConnIdx = -1;
+    }
+
+    private static int wireArgbForConnection(WConnection c) {
+        int h = Objects.hash(c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin());
+        return WIRE_ARGB_PALETTE[Math.floorMod(h, WIRE_ARGB_PALETTE.length)];
+    }
+
+    private static void fillWireChainEndpoints(WConnection conn, WNode src, WNode tgt, int[] xs, int[] ys) {
+        int i = 0;
+        xs[i] = src.getX() + src.getWidth();
+        ys[i] = src.getY() + 18 + conn.sourcePin() * 12;
+        for (int w = 0; w < conn.waypointXs().length; w++) {
+            i++;
+            xs[i] = conn.waypointXs()[w];
+            ys[i] = conn.waypointYs()[w];
+        }
+        i++;
+        xs[i] = tgt.getX();
+        ys[i] = tgt.getY() + 18 + conn.targetPin() * 12;
+    }
+
+    private static int wireChainLen(WConnection c) {
+        return 2 + c.waypointXs().length;
+    }
+
+    private static float distSq(int ax, int ay, int bx, int by) {
+        int dx = ax - bx;
+        int dy = ay - by;
+        return dx * dx + dy * dy;
+    }
+
+    private static boolean waypointInsertClearOfOthers(
+            int ix, int iy, int[] xs, int[] ys, int seg, float minD) {
+        float m2 = minD * minD;
+        int a = seg;
+        int b = seg + 1;
+        if (distSq(ix, iy, xs[a], ys[a]) < m2 || distSq(ix, iy, xs[b], ys[b]) < m2) {
+            return false;
+        }
+        for (int k = 0; k < xs.length; k++) {
+            if (k == a || k == b) {
+                continue;
+            }
+            if (distSq(ix, iy, xs[k], ys[k]) < m2) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private int wirePickGhostRadiusGraph() {
+        float scale = editorContentScale();
+        return Math.max(5, Mth.ceil(9f / scale));
+    }
+
+    private void updateWireInteractionHover(int gx, int gy) {
+        clearWireHover();
+        if (graphPointBlocksWireInteraction(gx, gy)) {
+            return;
+        }
+        float scale = editorContentScale();
+        int waypointPickR = Math.max(6, Mth.ceil(10f / scale));
+        int curvePickR = Math.max(5, Mth.ceil(8f / scale));
+        int insertMinSep = Math.max(12, Mth.ceil(14f / scale));
+        float wpR2 = waypointPickR * (float) waypointPickR;
+        float cvR2 = curvePickR * (float) curvePickR;
+        int bestWpConn = -1;
+        int bestWpIdx = -1;
+        float bestWpD2 = wpR2;
+        List<WConnection> conns = graph.getConnections();
+        for (int ci = 0; ci < conns.size(); ci++) {
+            WConnection c = conns.get(ci);
+            for (int wi = 0; wi < c.waypointXs().length; wi++) {
+                float d2 = distSq(gx, gy, c.waypointXs()[wi], c.waypointYs()[wi]);
+                if (d2 <= bestWpD2) {
+                    bestWpD2 = d2;
+                    bestWpConn = ci;
+                    bestWpIdx = wi;
+                }
+            }
+        }
+        if (bestWpConn >= 0) {
+            wireHoverKind = WireHoverKind.WAYPOINT;
+            wireHoverConnIdx = bestWpConn;
+            wireHoverWaypointIdx = bestWpIdx;
+            return;
+        }
+        int bestCi = -1;
+        int bestSeg = 0;
+        int bestIx = 0;
+        int bestIy = 0;
+        float bestD2 = cvR2;
+        boolean insertOk = false;
+        for (int ci = 0; ci < conns.size(); ci++) {
+            WConnection c = conns.get(ci);
+            WNode s = findNode(c.sourceNode());
+            WNode t = findNode(c.targetNode());
+            if (s == null || t == null) {
+                continue;
+            }
+            int n = wireChainLen(c);
+            int[] xs = new int[n];
+            int[] ys = new int[n];
+            fillWireChainEndpoints(c, s, t, xs, ys);
+            for (int seg = 0; seg < n - 1; seg++) {
+                int ax = xs[seg];
+                int ay = ys[seg];
+                int bx = xs[seg + 1];
+                int by = ys[seg + 1];
+                for (int step = 0; step <= 24; step++) {
+                    float tf = step / 24f;
+                    float px = wireCurveX(ax, bx, tf);
+                    float py = wireCurveY(ay, by, tf);
+                    float dx = gx - px;
+                    float dy = gy - py;
+                    float d2 = dx * dx + dy * dy;
+                    if (d2 < bestD2) {
+                        bestD2 = d2;
+                        bestCi = ci;
+                        bestSeg = seg;
+                        bestIx = Math.round(px);
+                        bestIy = Math.round(py);
+                        insertOk =
+                                waypointInsertClearOfOthers(bestIx, bestIy, xs, ys, seg, (float) insertMinSep);
+                    }
+                }
+            }
+        }
+        if (bestCi < 0) {
+            return;
+        }
+        wireHoverConnIdx = bestCi;
+        if (insertOk) {
+            wireHoverKind = WireHoverKind.INSERT_GHOST;
+            wireHoverInsertSeg = bestSeg;
+            wireHoverInsertGx = bestIx;
+            wireHoverInsertGy = bestIy;
+        } else {
+            wireHoverKind = WireHoverKind.CURVE_ONLY;
+        }
+    }
+
+    private boolean graphPointBlocksWireInteraction(int gx, int gy) {
+        for (WNode n : graph.getNodes()) {
+            if (gx >= n.getX()
+                    && gx < n.getX() + n.getWidth()
+                    && gy >= n.getY()
+                    && gy < n.getY() + n.getHeight()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void insertWaypointOnConnection(int connIdx, int seg, int ix, int iy) {
+        WConnection c = graph.getConnections().get(connIdx);
+        int oldN = c.waypointXs().length;
+        int[] nxs = new int[oldN + 1];
+        int[] nys = new int[oldN + 1];
+        for (int i = 0; i < seg; i++) {
+            nxs[i] = c.waypointXs()[i];
+            nys[i] = c.waypointYs()[i];
+        }
+        nxs[seg] = ix;
+        nys[seg] = iy;
+        for (int i = seg; i < oldN; i++) {
+            nxs[i + 1] = c.waypointXs()[i];
+            nys[i + 1] = c.waypointYs()[i];
+        }
+        graph.getConnections()
+                .set(
+                        connIdx,
+                        new WConnection(
+                                c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin(), nxs, nys));
+    }
+
+    private void removeWaypointFromConnection(int connIdx, int wpIdx) {
+        WConnection c = graph.getConnections().get(connIdx);
+        int n = c.waypointXs().length;
+        if (wpIdx < 0 || wpIdx >= n || n <= 0) {
+            return;
+        }
+        if (n == 1) {
+            graph.getConnections()
+                    .set(
+                            connIdx,
+                            WConnection.withoutWaypoints(
+                                    c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin()));
+            return;
+        }
+        int[] nxs = new int[n - 1];
+        int[] nys = new int[n - 1];
+        for (int i = 0, j = 0; i < n; i++) {
+            if (i == wpIdx) {
+                continue;
+            }
+            nxs[j] = c.waypointXs()[i];
+            nys[j] = c.waypointYs()[i];
+            j++;
+        }
+        graph.getConnections()
+                .set(
+                        connIdx,
+                        new WConnection(
+                                c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin(), nxs, nys));
+    }
+
+    private void drawConnection(GuiGraphics graphics, WConnection conn, int connIdx) {
         WNode src = findNode(conn.sourceNode());
         WNode tgt = findNode(conn.targetNode());
-        if (src == null || tgt == null) return;
-        int x1 = src.getX() + src.getWidth();
-        int y1 = src.getY() + 18 + conn.sourcePin() * 12;
-        int x2 = tgt.getX();
-        int y2 = tgt.getY() + 18 + conn.targetPin() * 12;
-        drawSmoothCurve(graphics, x1, y1, x2, y2, 0xAA00FF88, 1.5f);
+        if (src == null || tgt == null) {
+            return;
+        }
+        int n = wireChainLen(conn);
+        int[] xs = new int[n];
+        int[] ys = new int[n];
+        fillWireChainEndpoints(conn, src, tgt, xs, ys);
+        int color = wireArgbForConnection(conn);
+        for (int seg = 0; seg < n - 1; seg++) {
+            drawSmoothCurve(graphics, xs[seg], ys[seg], xs[seg + 1], ys[seg + 1], color, 1.5f);
+        }
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 500);
-        drawConnectionPulseTravel(graphics, x1, y1, x2, y2, src.getTopoDepth());
+        drawConnectionPulseTravelChain(graphics, xs, ys, src.getTopoDepth(), color);
         graphics.pose().popPose();
+        int rgb = color & 0xFFFFFF;
+        int wh = Math.max(3, Mth.ceil(4f / editorContentScale()));
+        for (int w = 0; w < conn.waypointXs().length; w++) {
+            int wx = conn.waypointXs()[w];
+            int wy = conn.waypointYs()[w];
+            boolean hot =
+                    wireHoverKind == WireHoverKind.WAYPOINT
+                            && connIdx == wireHoverConnIdx
+                            && w == wireHoverWaypointIdx;
+            int ring = hot ? 0xFFFFFFFF : (0xCC000000 | rgb);
+            int core = 0xFF000000 | rgb;
+            int half = wh / 2;
+            graphics.fill(wx - wh - 1, wy - wh - 1, wx + wh + 2, wy + wh + 2, ring);
+            graphics.fill(wx - half, wy - half, wx + half + 1, wy + half + 1, core);
+        }
+        if (connIdx == wireHoverConnIdx && wireHoverKind == WireHoverKind.INSERT_GHOST) {
+            int gr = Math.max(3, Mth.ceil(5f / editorContentScale()));
+            int gx = wireHoverInsertGx;
+            int gy = wireHoverInsertGy;
+            graphics.fill(gx - gr - 2, gy - gr - 2, gx + gr + 3, gy + gr + 3, WIRE_INSERT_GHOST_ARGB);
+            graphics.fill(gx - gr, gy - gr, gx + gr + 1, gy + gr + 1, 0xFF222244);
+        }
     }
 
     /** Loops per second along each wire (phase 0–1); independent of sim pulses so motion stays smooth. */
@@ -3059,8 +3771,13 @@ public class WNodeScreen extends Screen {
     private static final int PULSE_DOT_COUNT = 2;
     private static final float PULSE_DOT_SPACING = 0.11f;
 
-    /** Pulse travels along the same cubic as {@link #drawSmoothCurve} (t = 0..1 along the wire). */
-    private void drawConnectionPulseTravel(GuiGraphics graphics, int x1, int y1, int x2, int y2, int topoDepth) {
+    private void drawConnectionPulseTravelChain(
+            GuiGraphics graphics, int[] xs, int[] ys, int topoDepth, int wireArgb) {
+        int segCount = xs.length - 1;
+        if (segCount <= 0) {
+            return;
+        }
+        int rgb = wireArgb & 0xFFFFFF;
         float base = wirePulseScroll - Mth.floor(wirePulseScroll);
         float phase = base - topoDepth * PULSE_STAGGER_PER_DEPTH;
         phase -= Mth.floor(phase);
@@ -3071,11 +3788,15 @@ public class WNodeScreen extends Screen {
                 u += 1f;
             }
             float smooth = u * u * (3.0f - 2.0f * u);
-            float px = wireCurveX(x1, x2, smooth);
-            float py = wireCurveY(y1, y2, smooth);
+            float g = smooth * segCount;
+            int seg = Math.min(segCount - 1, (int) g);
+            float localT = g - seg;
+            localT = Mth.clamp(localT, 0f, 1f);
+            float px = wireCurveX(xs[seg], xs[seg + 1], localT);
+            float py = wireCurveY(ys[seg], ys[seg + 1], localT);
             int alpha = 235 - k * 70;
-            int core = (alpha << 24) | 0x00FF88;
-            int glow = ((alpha / 4) << 24) | 0x00FF88;
+            int core = (alpha << 24) | rgb;
+            int glow = ((alpha / 4) << 24) | rgb;
             graphics.fill((int) px - 3, (int) py - 3, (int) px + 4, (int) py + 4, glow);
             graphics.fill((int) px - 1, (int) py - 1, (int) px + 2, (int) py + 2, core);
         }
@@ -3137,6 +3858,9 @@ public class WNodeScreen extends Screen {
         if (newFunctionNamingOpen) {
             return true;
         }
+        if (itemPickerOpen) {
+            return handleItemPickerClick(mouseX, mouseY, button);
+        }
         if (handleNestedDiskToolbarClick(mouseX, mouseY, button)) {
             return true;
         }
@@ -3182,8 +3906,9 @@ public class WNodeScreen extends Screen {
         if (button == 0 && sectionsSidebarContains(mouseX, mouseY)) {
             int y = sectionsSidebarY() + 18;
             int row = ((int) mouseY - y) / 13;
-            if (row >= 0 && row < graph.getSections().size()) {
-                UUID id = graph.getSections().get(row).getId();
+            List<WGraph.WSection> sidebarSecs = sectionsSortedByLayer(graph.getSections());
+            if (row >= 0 && row < sidebarSecs.size()) {
+                UUID id = sidebarSecs.get(row).getId();
                 selectedSectionId = id;
                 long now = net.minecraft.Util.getMillis();
                 if (id.equals(lastSidebarSectionClickId) && now - lastSidebarSectionClickAtMs <= SECTION_DOUBLE_CLICK_MS) {
@@ -3236,6 +3961,10 @@ public class WNodeScreen extends Screen {
             }
             net.minecraft.resources.ResourceLocation pick = hitBrowseNodeTypeAt(mx, my);
             if (pick != null) {
+                if (isEditorPeripheralLocked(pick)) {
+                    playUiClick(0.82f);
+                    return true;
+                }
                 WNode placed = addNodeAtReturning(pick, menuAnchorNx, menuAnchorNy);
                 tryAutoConnectPendingOutput(placed);
                 isSearching = false;
@@ -3305,8 +4034,62 @@ public class WNodeScreen extends Screen {
                         sectionDragOriginalNodePos.put(n.getId(), new int[] {n.getX(), n.getY()});
                     }
                 }
+                sectionDragChildSections.clear();
+                sectionDragOriginalNestedSectionPos.clear();
+                for (WGraph.WSection nested : graph.getSections()) {
+                    if (nested.getId().equals(sec.getId())) {
+                        continue;
+                    }
+                    if (sectionFullyContainedIn(nested, sec)) {
+                        sectionDragChildSections.add(nested);
+                        sectionDragOriginalNestedSectionPos.put(
+                                nested.getId(), new int[] {nested.getX(), nested.getY()});
+                    }
+                }
+                sectionDragPrevTotalDx = 0;
+                sectionDragPrevTotalDy = 0;
                 recordCheckpointBeforeEdit();
                 return true;
+            }
+        }
+        if (button == 0 && linkingNode == null && !isCreatingSection && isInsideEditorPanel(mouseX, mouseY)) {
+            updateWireInteractionHover(nx, ny);
+            if (Screen.hasAltDown()) {
+                if (wireHoverKind == WireHoverKind.WAYPOINT) {
+                    recordCheckpointBeforeEdit();
+                    removeWaypointFromConnection(wireHoverConnIdx, wireHoverWaypointIdx);
+                    clearWireHover();
+                    playUiClick(0.78f);
+                    return true;
+                }
+                if (wireHoverKind == WireHoverKind.INSERT_GHOST
+                        || wireHoverKind == WireHoverKind.CURVE_ONLY) {
+                    recordCheckpointBeforeEdit();
+                    graph.getConnections().remove(wireHoverConnIdx);
+                    graph.updateTopology();
+                    clearWireHover();
+                    playUiClick(0.76f);
+                    return true;
+                }
+            } else {
+                if (wireHoverKind == WireHoverKind.INSERT_GHOST) {
+                    int gr = wirePickGhostRadiusGraph();
+                    int ddx = nx - wireHoverInsertGx;
+                    int ddy = ny - wireHoverInsertGy;
+                    if (ddx * ddx + ddy * ddy <= gr * gr) {
+                        recordCheckpointBeforeEdit();
+                        insertWaypointOnConnection(
+                                wireHoverConnIdx, wireHoverInsertSeg, wireHoverInsertGx, wireHoverInsertGy);
+                        playUiClick(1.04f);
+                        return true;
+                    }
+                }
+                if (wireHoverKind == WireHoverKind.WAYPOINT) {
+                    recordCheckpointBeforeEdit();
+                    draggingWireConnIdx = wireHoverConnIdx;
+                    draggingWireWaypointIdx = wireHoverWaypointIdx;
+                    return true;
+                }
             }
         }
         if (button == 1) {
@@ -3317,9 +4100,9 @@ public class WNodeScreen extends Screen {
                 }
             }
             if (!hitAnything && renamingSectionId == null && renamingLibraryFunctionId == null) {
-                WGraph.WSection secPick = findSectionContaining(nx, ny);
-                if (secPick != null) {
-                    openSectionColorPicker(secPick, (int) mouseX, (int) mouseY);
+                WGraph.WSection secTitle = findSectionAt(nx, ny);
+                if (secTitle != null) {
+                    openSectionColorPicker(secTitle, (int) mouseX, (int) mouseY);
                     playUiClick(1.0f);
                     return true;
                 }
@@ -3359,7 +4142,11 @@ public class WNodeScreen extends Screen {
         for (int i = graph.getNodes().size() - 1; i >= 0; i--) {
             WNode node = graph.getNodes().get(i);
             int outPin = node.getPinAt(nx - node.getX(), ny - node.getY(), false);
-            if (outPin != -1) { linkingNode = node; linkingPin = outPin; return true; }
+            if (outPin != -1 && !isEditorPeripheralLocked(node.getTypeId())) {
+                linkingNode = node;
+                linkingPin = outPin;
+                return true;
+            }
             if (nx >= node.getX() && nx <= node.getX() + node.getWidth() && ny >= node.getY() && ny <= node.getY() + node.getHeight()) {
                 if (!Screen.hasShiftDown() && !node.isSelected()) graph.getNodes().forEach(n -> n.setSelected(false));
                 node.setSelected(true);
@@ -3370,11 +4157,18 @@ public class WNodeScreen extends Screen {
                     return true;
                 }
 
-                if (node.mouseClicked(nx - node.getX(), ny - node.getY(), button)) return true;
+                if (!isEditorPeripheralLocked(node.getTypeId())
+                        && node.mouseClicked(nx - node.getX(), ny - node.getY(), button)) {
+                    return true;
+                }
 
                 recordCheckpointBeforeEdit();
-                draggingNode = node; dragOffsetX = nx - node.getX(); dragOffsetY = ny - node.getY();
-                graph.getNodes().remove(i); graph.getNodes().add(node); return true;
+                draggingNode = node;
+                dragOffsetX = nx - node.getX();
+                dragOffsetY = ny - node.getY();
+                graph.getNodes().remove(i);
+                graph.getNodes().add(node);
+                return true;
             }
         }
         if (button == 0) {
@@ -3409,6 +4203,11 @@ public class WNodeScreen extends Screen {
             for (WNode node : graph.getNodes()) {
                 int inPin = node.getPinAt(nx - node.getX(), ny - node.getY(), true);
                 if (inPin != -1) {
+                    if (isEditorPeripheralLocked(linkingNode.getTypeId())
+                            || isEditorPeripheralLocked(node.getTypeId())) {
+                        playUiClick(0.82f);
+                        continue;
+                    }
                     recordCheckpointBeforeEdit();
                     graph.connect(linkingNode.getId(), linkingPin, node.getId(), inPin);
                     playUiClick(1.1f);
@@ -3432,7 +4231,9 @@ public class WNodeScreen extends Screen {
                 menuY = (int) mouseY;
             }
         }
-        if (selectedNode != null) selectedNode.mouseReleased(nx, ny, button);
+        if (selectedNode != null && !isEditorPeripheralLocked(selectedNode.getTypeId())) {
+            selectedNode.mouseReleased(nx, ny, button);
+        }
         isPanning = false;
         draggingNode = null;
         draggingSection = null;
@@ -3440,8 +4241,14 @@ public class WNodeScreen extends Screen {
         sectionResizeHandle = SectionResizeHandle.NONE;
         linkingNode = null;
         linkingPin = -1;
+        if (button == 0) {
+            draggingWireConnIdx = -1;
+            draggingWireWaypointIdx = -1;
+        }
         sectionDragMemberNodes.clear();
         sectionDragOriginalNodePos.clear();
+        sectionDragChildSections.clear();
+        sectionDragOriginalNestedSectionPos.clear();
         sectionPickDragChannel = -1;
         return super.mouseReleased(mouseX, mouseY, button);
     }
@@ -3463,6 +4270,24 @@ public class WNodeScreen extends Screen {
             float mx = screenToGraphX(mouseX);
             float my = screenToGraphY(mouseY);
             selEndX = mx; selEndY = my; return true;
+        }
+        if (draggingWireConnIdx >= 0 && button == 0) {
+            if (draggingWireConnIdx >= graph.getConnections().size()) {
+                draggingWireConnIdx = -1;
+                draggingWireWaypointIdx = -1;
+                return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+            }
+            int gnx = screenToGraphX(mouseX);
+            int gny = screenToGraphY(mouseY);
+            WConnection c = graph.getConnections().get(draggingWireConnIdx);
+            int[] nxs = new int[c.waypointXs().length];
+            int[] nys = new int[c.waypointYs().length];
+            System.arraycopy(c.waypointXs(), 0, nxs, 0, nxs.length);
+            System.arraycopy(c.waypointYs(), 0, nys, 0, nys.length);
+            nxs[draggingWireWaypointIdx] = gnx;
+            nys[draggingWireWaypointIdx] = gny;
+            graph.getConnections().set(draggingWireConnIdx, c.withWaypoints(nxs, nys));
+            return true;
         }
         if (isPanning) {
             float s = editorContentScale();
@@ -3521,7 +4346,17 @@ public class WNodeScreen extends Screen {
             int newY = ny - sectionDragOffsetY;
             int totalDx = newX - sectionDragStartSectionX;
             int totalDy = newY - sectionDragStartSectionY;
+            int ddx = totalDx - sectionDragPrevTotalDx;
+            int ddy = totalDy - sectionDragPrevTotalDy;
+            sectionDragPrevTotalDx = totalDx;
+            sectionDragPrevTotalDy = totalDy;
             draggingSection.setPos(newX, newY);
+            for (WGraph.WSection nested : sectionDragChildSections) {
+                int[] sp = sectionDragOriginalNestedSectionPos.get(nested.getId());
+                if (sp != null) {
+                    nested.setPos(sp[0] + totalDx, sp[1] + totalDy);
+                }
+            }
             for (UUID id : sectionDragMemberNodes) {
                 WNode n = findNode(id);
                 int[] p = sectionDragOriginalNodePos.get(id);
@@ -3529,13 +4364,29 @@ public class WNodeScreen extends Screen {
                     n.setPos(p[0] + totalDx, p[1] + totalDy);
                 }
             }
+            if ((ddx != 0 || ddy != 0) && !sectionDragMemberNodes.isEmpty()) {
+                graph.shiftWaypointsForConnectionsTouching(sectionDragMemberNodes, ddx, ddy);
+            }
             return true;
         }
         if (draggingNode != null) {
             float s = editorContentScale();
             double dx = dragX / s;
             double dy = dragY / s;
-            for (WNode n : graph.getNodes()) if (n.isSelected()) n.setPos(n.getX() + (int)dx, n.getY() + (int)dy);
+            int idx = (int) dx;
+            int idy = (int) dy;
+            if (idx != 0 || idy != 0) {
+                List<UUID> moved = new ArrayList<>();
+                for (WNode n : graph.getNodes()) {
+                    if (n.isSelected()) {
+                        moved.add(n.getId());
+                    }
+                }
+                if (!moved.isEmpty()) {
+                    graph.shiftWaypointsForConnectionsTouching(moved, idx, idy);
+                }
+            }
+            for (WNode n : graph.getNodes()) if (n.isSelected()) n.setPos(n.getX() + idx, n.getY() + idy);
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
@@ -3545,6 +4396,12 @@ public class WNodeScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (!isInsideEditorPanel(mouseX, mouseY)) {
             return false;
+        }
+        if (itemPickerOpen && itemPickerContains(mouseX, mouseY)) {
+            int maxScroll = Math.max(0, itemPickCandidates.size() - ITEM_PICK_VISIBLE_ROWS);
+            itemPickerScroll =
+                    Mth.clamp(itemPickerScroll - (int) Math.signum(scrollY), 0, maxScroll);
+            return true;
         }
         if (sectionColorPickerSectionId != null) {
             return true;
@@ -3599,6 +4456,29 @@ public class WNodeScreen extends Screen {
                     newFunctionNameBuffer = newFunctionNameBuffer.substring(0, newFunctionNameBuffer.length() - 1);
                 }
                 playUiClick(0.9f);
+                return true;
+            }
+            return true;
+        }
+        if (itemPickerOpen) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                closeItemPicker();
+                playUiClick(0.92f);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !itemPickerQuery.isEmpty()) {
+                itemPickerQuery = itemPickerQuery.substring(0, itemPickerQuery.length() - 1);
+                itemPickerScroll = 0;
+                rebuildItemPickCandidates();
+                playUiClick(0.9f);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                if (!itemPickCandidates.isEmpty() && itemPickerCallback != null) {
+                    itemPickerCallback.accept(itemPickCandidates.get(0).copyWithCount(1));
+                }
+                closeItemPicker();
+                playUiClick(1.03f);
                 return true;
             }
             return true;
@@ -3737,10 +4617,20 @@ public class WNodeScreen extends Screen {
             if (keyCode == 257 || keyCode == 335) {
                 rebuildSearchHitRows();
                 if (!searchQuery.trim().isEmpty() && !searchHitRows.isEmpty()) {
-                    WNode placed = addNodeAtReturning(searchHitRows.get(0).nodeType(), menuAnchorNx, menuAnchorNy);
-                    tryAutoConnectPendingOutput(placed);
-                    isSearching = false;
-                    clearStickyBrowseRoot();
+                    boolean placedAny = false;
+                    for (BrowseNodeRow row : searchHitRows) {
+                        if (!isEditorPeripheralLocked(row.nodeType())) {
+                            WNode placed = addNodeAtReturning(row.nodeType(), menuAnchorNx, menuAnchorNy);
+                            tryAutoConnectPendingOutput(placed);
+                            isSearching = false;
+                            clearStickyBrowseRoot();
+                            placedAny = true;
+                            break;
+                        }
+                    }
+                    if (!placedAny) {
+                        playUiClick(0.82f);
+                    }
                 }
                 return true;
             }
@@ -3754,8 +4644,15 @@ public class WNodeScreen extends Screen {
             }
             return true;
         }
-        if (selectedNode != null && selectedNode.keyPressed(keyCode, scanCode, modifiers)) return true;
-        boolean nodeUiFocused = selectedNode != null && selectedNode.hasFocusedElement();
+        if (selectedNode != null
+                && !isEditorPeripheralLocked(selectedNode.getTypeId())
+                && selectedNode.keyPressed(keyCode, scanCode, modifiers)) {
+            return true;
+        }
+        boolean nodeUiFocused =
+                selectedNode != null
+                        && !isEditorPeripheralLocked(selectedNode.getTypeId())
+                        && selectedNode.hasFocusedElement();
         if (!nodeUiFocused && keyCode == GLFW.GLFW_KEY_S && hasControlDown()) {
             int nx = screenToGraphX(this.mouseX);
             int ny = screenToGraphY(this.mouseY);
@@ -3776,7 +4673,7 @@ public class WNodeScreen extends Screen {
                 && selectedLibraryFunctionId != null
                 && functionStore != null) {
             FunctionDefinitionStore.Definition lf = functionStore.get(selectedLibraryFunctionId);
-            if (lf != null) {
+            if (lf != null && !isFunctionLibraryDefinitionHardwareLocked(lf)) {
                 startLibraryFunctionRename(lf.id(), lf.name());
                 functionPickerOpen = true;
                 return true;
@@ -3844,6 +4741,14 @@ public class WNodeScreen extends Screen {
             }
             return true;
         }
+        if (itemPickerOpen) {
+            if (!Character.isISOControl(codePoint) && itemPickerQuery.length() < 64) {
+                itemPickerQuery += codePoint;
+                itemPickerScroll = 0;
+                rebuildItemPickCandidates();
+            }
+            return true;
+        }
         if (renamingLibraryFunctionId != null) {
             if (!Character.isISOControl(codePoint)) {
                 libraryFnRenameReplaceSelection(String.valueOf(codePoint));
@@ -3861,7 +4766,11 @@ public class WNodeScreen extends Screen {
             searchQuery += codePoint;
             return true;
         }
-        if (selectedNode != null && selectedNode.charTyped(codePoint, modifiers)) return true;
+        if (selectedNode != null
+                && !isEditorPeripheralLocked(selectedNode.getTypeId())
+                && selectedNode.charTyped(codePoint, modifiers)) {
+            return true;
+        }
         return super.charTyped(codePoint, modifiers);
     }
 
@@ -3869,6 +4778,10 @@ public class WNodeScreen extends Screen {
         if (SECTION_TOOL_TYPE.equals(type)) {
             beginSectionCreate(x, y);
             playUiClick(1.02f);
+            return null;
+        }
+        if (isEditorPeripheralLocked(type)) {
+            playUiClick(0.82f);
             return null;
         }
         WNode node = NodeRegistry.createNode(type, x, y);
@@ -3941,7 +4854,10 @@ public class WNodeScreen extends Screen {
             graphics.fill(L.delX, L.btnY, L.delX + L.btn, L.btnY + L.btn, 0x44FF6666);
         }
         graphics.blit(ICON_DELETE, L.delX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        graphics.drawString(font, "X", L.delX + L.btn - font.width("X") - 2, L.btnY + L.btn - font.lineHeight - 1, 0xFF994444, false);
+        int dockKey = 11;
+        int dk = L.btn - dockKey - 3;
+        blitScaledHintTile(graphics, KEY_CAP_DEL, L.delX + dk, L.btnY + dk, dockKey);
+        blitScaledHintTile(graphics, KEY_CAP_X, L.delX + 3, L.btnY + dk, dockKey);
 
         if (dockButtonHovered(mx, my, L.disX, L.btnY, L.btn)) {
             graphics.fill(L.disX, L.btnY, L.disX + L.btn, L.btnY + L.btn, 0x44FFCC66);
@@ -4022,7 +4938,7 @@ public class WNodeScreen extends Screen {
             net.minecraft.resources.ResourceLocation type =
                     net.minecraft.resources.ResourceLocation.parse(t.getString("typeId"));
             WNode copy = NodeRegistry.createNode(type, t.getInt("x"), t.getInt("y"));
-            if (copy != null) {
+            if (copy != null && !isEditorPeripheralLocked(type)) {
                 copy.load(t);
                 graph.addNode(copy);
                 copy.setSelected(true);
@@ -4094,9 +5010,16 @@ public class WNodeScreen extends Screen {
         for (WNode n : rm) {
             graph.removeNode(n);
         }
-        graph.getSections().removeIf(s -> s.getId().equals(sectionId));
+        List<UUID> removeSectionIds = new ArrayList<>();
+        removeSectionIds.add(sectionId);
+        for (WGraph.WSection s : graph.getSections()) {
+            if (!s.getId().equals(sectionId) && sectionFullyContainedIn(s, sec)) {
+                removeSectionIds.add(s.getId());
+            }
+        }
+        graph.getSections().removeIf(s -> removeSectionIds.contains(s.getId()));
         selectedSectionId = null;
-        if (sectionColorPickerSectionId != null && sectionColorPickerSectionId.equals(sectionId)) {
+        if (sectionColorPickerSectionId != null && removeSectionIds.contains(sectionColorPickerSectionId)) {
             closeSectionColorPicker();
         }
         selectedNode = null;
@@ -4118,6 +5041,9 @@ public class WNodeScreen extends Screen {
         ListTag nodesTag = new ListTag();
         for (WNode node : graph.getNodes()) {
             if (nodeCenterInsideSection(node, sec)) {
+                if (node.isDuplicationLocked()) {
+                    continue;
+                }
                 inside.add(node);
                 nodesTag.add(node.save());
             }
@@ -4136,10 +5062,33 @@ public class WNodeScreen extends Screen {
             c.putInt("srcP", conn.sourcePin());
             c.putString("tgt", conn.targetNode().toString());
             c.putInt("tgtP", conn.targetPin());
+            if (conn.waypointXs().length > 0) {
+                ListTag wps = new ListTag();
+                for (int j = 0; j < conn.waypointXs().length; j++) {
+                    CompoundTag w = new CompoundTag();
+                    w.putInt("x", conn.waypointXs()[j]);
+                    w.putInt("y", conn.waypointYs()[j]);
+                    wps.add(w);
+                }
+                c.put("wps", wps);
+            }
             connTag.add(c);
         }
         ListTag sectionsTag = new ListTag();
         sectionsTag.add(sec.toNbt());
+        List<WGraph.WSection> nested = new ArrayList<>();
+        for (WGraph.WSection s : graph.getSections()) {
+            if (s.getId().equals(sec.getId())) {
+                continue;
+            }
+            if (sectionFullyContainedIn(s, sec)) {
+                nested.add(s);
+            }
+        }
+        nested.sort(Comparator.comparingInt(WGraph.WSection::getLayer));
+        for (WGraph.WSection s : nested) {
+            sectionsTag.add(s.toNbt());
+        }
         CompoundTag root = new CompoundTag();
         root.put("nodes", nodesTag);
         root.put("conns", connTag);
@@ -4169,7 +5118,7 @@ public class WNodeScreen extends Screen {
     private void copySelectedNodesToClipboard() {
         ListTag nodesTag = new ListTag();
         for (WNode node : graph.getNodes()) {
-            if (node.isSelected()) {
+            if (node.isSelected() && !node.isDuplicationLocked()) {
                 nodesTag.add(node.save());
             }
         }
@@ -4188,6 +5137,16 @@ public class WNodeScreen extends Screen {
                 c.putInt("srcP", conn.sourcePin());
                 c.putString("tgt", conn.targetNode().toString());
                 c.putInt("tgtP", conn.targetPin());
+                if (conn.waypointXs().length > 0) {
+                    ListTag wps = new ListTag();
+                    for (int j = 0; j < conn.waypointXs().length; j++) {
+                        CompoundTag w = new CompoundTag();
+                        w.putInt("x", conn.waypointXs()[j]);
+                        w.putInt("y", conn.waypointYs()[j]);
+                        wps.add(w);
+                    }
+                    c.put("wps", wps);
+                }
                 connTag.add(c);
             }
         }
@@ -4223,8 +5182,11 @@ public class WNodeScreen extends Screen {
                 nTag.remove("id");
                 net.minecraft.resources.ResourceLocation type =
                         net.minecraft.resources.ResourceLocation.parse(nTag.getString("typeId"));
+                if (FunctionStartNode.TYPE_FN_START.equals(type) || FunctionEndNode.TYPE_FN_END.equals(type)) {
+                    continue;
+                }
                 WNode newNode = NodeRegistry.createNode(type, nTag.getInt("x") + 10, nTag.getInt("y") + 10);
-                if (newNode != null) {
+                if (newNode != null && !isEditorPeripheralLocked(type)) {
                     newNode.load(nTag);
                     oldToNew.put(oldId, newNode.getId());
                     graph.addNode(newNode);
@@ -4236,7 +5198,23 @@ public class WNodeScreen extends Screen {
                 CompoundTag c = connTag.getCompound(i);
                 UUID newSrc = oldToNew.get(UUID.fromString(c.getString("src")));
                 UUID newTgt = oldToNew.get(UUID.fromString(c.getString("tgt")));
-                if (newSrc != null && newTgt != null) graph.connect(newSrc, c.getInt("srcP"), newTgt, c.getInt("tgtP"));
+                if (newSrc == null || newTgt == null) {
+                    continue;
+                }
+                if (c.contains("wps")) {
+                    ListTag wps = c.getList("wps", 10);
+                    int[] wx = new int[wps.size()];
+                    int[] wy = new int[wps.size()];
+                    for (int j = 0; j < wps.size(); j++) {
+                        CompoundTag w = wps.getCompound(j);
+                        wx[j] = w.getInt("x") + 10;
+                        wy[j] = w.getInt("y") + 10;
+                    }
+                    graph.connect(
+                            new WConnection(newSrc, c.getInt("srcP"), newTgt, c.getInt("tgtP"), wx, wy));
+                } else {
+                    graph.connect(newSrc, c.getInt("srcP"), newTgt, c.getInt("tgtP"));
+                }
             }
             if (!oldToNew.isEmpty() || !sectionsClipboard.isEmpty()) {
                 playUiClick(1.07f);

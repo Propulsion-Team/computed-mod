@@ -2,6 +2,7 @@ package dev.devce.websnodelib.api.elements;
 
 import dev.devce.websnodelib.api.WElement;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.nbt.CompoundTag;
 
 public class WCheckbox extends WElement {
     private boolean checked;
@@ -37,7 +38,7 @@ public class WCheckbox extends WElement {
 
     @Override
     public boolean handleMouseClick(double mouseX, double mouseY, int button) {
-        if (button == 0 && mouseX >= 0 && mouseX <= 10 && mouseY >= 1 && mouseY <= 11) {
+        if (button == 0 && mouseX >= 0 && mouseX < getWidth() && mouseY >= 0 && mouseY < getHeight()) {
             checked = !checked;
             if (onToggle != null) {
                 onToggle.run();
@@ -45,6 +46,20 @@ public class WCheckbox extends WElement {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public CompoundTag save() {
+        CompoundTag tag = super.save();
+        tag.putBoolean("Checked", checked);
+        return tag;
+    }
+
+    @Override
+    public void load(CompoundTag tag) {
+        if (tag.contains("Checked")) {
+            checked = tag.getBoolean("Checked");
+        }
     }
 
     public boolean isChecked() { return checked; }

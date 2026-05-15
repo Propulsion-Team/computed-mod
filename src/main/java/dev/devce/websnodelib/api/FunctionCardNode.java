@@ -1,6 +1,7 @@
 package dev.devce.websnodelib.api;
 
-import dev.devce.websnodelib.api.elements.WLabel;
+import dev.devce.websnodelib.api.elements.WIconStrip;
+import java.util.List;
 import java.util.UUID;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
@@ -17,6 +18,9 @@ public class FunctionCardNode extends WNode {
     private static final int MAX_EVAL_DEPTH = 48;
     private static final ThreadLocal<Integer> EVAL_DEPTH = ThreadLocal.withInitial(() -> 0);
 
+    private static final ResourceLocation ICON_UI_CLICK =
+            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/click.png");
+
     private final WGraph innerGraph = new WGraph();
     private UUID functionId = UUID.randomUUID();
 
@@ -27,7 +31,8 @@ public class FunctionCardNode extends WNode {
     public FunctionCardNode(int x, int y, UUID functionId) {
         super(TYPE_FUNCTION_CARD, "Function", x, y);
         this.functionId = functionId;
-        addElement(new WLabel("Alt+click: open"));
+        addElement(new WIconStrip(
+                List.of(UiKeyTextures.key("alt"), ICON_UI_CLICK), ": open", 0xFFCCCCCC, 12));
         innerGraph.updateTopology();
         setEvaluator(this::evaluateInner);
         syncPinsFromInner(null);
@@ -59,19 +64,30 @@ public class FunctionCardNode extends WNode {
         return card;
     }
 
+    /**
+     * After loading a root graph, refreshes each function card from the library store without clobbering
+     * in-graph state: the authoritative body is the {@code inner} tag on each card inside {@code ComputerGraph}.
+     * The store is only used to fill a missing/broken inner (old saves) or to refresh outer pins / titles.
+     */
     public static void applyLibraryToInnerGraphs(WGraph root, FunctionDefinitionStore store) {
         if (store == null) {
             return;
         }
         for (WNode n : root.getNodes()) {
             if (n instanceof FunctionCardNode c) {
-                CompoundTag body = store.getBody(c.getFunctionId());
-                if (body != null) {
-                    c.getInnerGraph().load(body.copy());
-                    c.syncPinsFromInner(store);
+                if (!functionInnerLooksUsable(c.getInnerGraph())) {
+                    CompoundTag body = store.getBody(c.getFunctionId());
+                    if (body != null) {
+                        c.getInnerGraph().load(body.copy());
+                    }
                 }
+                c.syncPinsFromInner(store);
             }
         }
+    }
+
+    private static boolean functionInnerLooksUsable(WGraph g) {
+        return findStart(g) != null && findEnd(g) != null;
     }
 
     public UUID getFunctionId() {

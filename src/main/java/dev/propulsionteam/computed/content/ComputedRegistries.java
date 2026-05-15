@@ -3,6 +3,7 @@ package dev.propulsionteam.computed.content;
 import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.blocks.ComputerBlock;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
+import dev.propulsionteam.computed.content.PeripheralConnectorItem;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.BlockItem;
@@ -55,8 +56,8 @@ public final class ComputedRegistries {
             BLOCKS.register("computer", props -> new ComputerBlock(BlockBehaviour.Properties.ofFullCopy(Blocks.IRON_BLOCK)));
     public static final DeferredItem<BlockItem> COMPUTER_BLOCK_ITEM =
             ITEMS.registerSimpleBlockItem("computer", COMPUTER_BLOCK);
-    public static final DeferredItem<Item> ANTENNA = ITEMS.registerItem(
-            "antenna",
+    public static final DeferredItem<Item> REDSTONE_LINK = ITEMS.registerItem(
+            "redstone_link",
             Item::new,
             new Item.Properties());
 
@@ -64,6 +65,12 @@ public final class ComputedRegistries {
             "redstone_emitter",
             Item::new,
             new Item.Properties());
+
+    public static final DeferredItem<PeripheralConnectorItem> PERIPHERAL_CONNECTOR =
+            ITEMS.registerItem(
+                    "peripheral_connector",
+                    PeripheralConnectorItem::new,
+                    new Item.Properties().durability(238));
 
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<ComputerBlockEntity>> COMPUTER_BLOCK_ENTITY =
             BLOCK_ENTITY_TYPES.register(
@@ -79,8 +86,9 @@ public final class ComputedRegistries {
                             .icon(() -> COMPUTER_BLOCK_ITEM.get().getDefaultInstance())
                             .displayItems((parameters, output) -> {
                                 output.accept(COMPUTER_BLOCK_ITEM.get());
-                                output.accept(ANTENNA.get());
+                                output.accept(REDSTONE_LINK.get());
                                 output.accept(REDSTONE_EMITTER.get());
+                                output.accept(PERIPHERAL_CONNECTOR.get());
                             })
                             .build());
 

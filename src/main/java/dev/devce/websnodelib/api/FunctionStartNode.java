@@ -167,9 +167,6 @@ public final class FunctionStartNode extends WNode {
                 argNames.add(list.getString(i));
             }
         }
-        if (argNames.isEmpty()) {
-            argNames.add("a");
-        }
         tickCheckbox.setChecked(tickable);
         rebuildUiAndPins();
     }

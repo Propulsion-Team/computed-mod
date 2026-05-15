@@ -1,6 +1,4 @@
 {
-  "values": [
-    "computed:antenna",
-    "computed:redstone_emitter"
-  ]
+  "replace": false,
+  "values": ["#computed:peripheral"]
 }

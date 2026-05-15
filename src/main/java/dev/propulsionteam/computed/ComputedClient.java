@@ -6,8 +6,13 @@ import dev.devce.websnodelib.api.WGraph;
 import dev.propulsionteam.computed.client.ComputerEditorScreen;
 import dev.propulsionteam.computed.client.ComputerPeripheralScreen;
 import dev.propulsionteam.computed.content.ComputedRegistries;
+import dev.propulsionteam.computed.content.Peripherals;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
+import java.util.HashSet;
+import java.util.Set;
 import net.minecraft.client.Minecraft;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.inventory.MenuType;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -37,7 +42,20 @@ public class ComputedClient {
                 graph.load(tag);
             }
             FunctionCardNode.applyLibraryToInnerGraphs(graph, functions);
-            Minecraft.getInstance().setScreen(new ComputerEditorScreen(pos, graph, functions));
+            Set<ResourceLocation> unlock = new HashSet<>();
+            if (tag.contains(Peripherals.NBT_EDITOR_PERIPHERAL_UNLOCK, Tag.TAG_LIST)) {
+                for (Tag t : tag.getList(Peripherals.NBT_EDITOR_PERIPHERAL_UNLOCK, Tag.TAG_STRING)) {
+                    unlock.add(ResourceLocation.parse(t.getAsString()));
+                }
+            }
+            Minecraft.getInstance()
+                    .setScreen(
+                            new ComputerEditorScreen(
+                                    pos,
+                                    graph,
+                                    functions,
+                                    unlock,
+                                    Peripherals.readPlacedPeripheralHudLines(tag)));
         });
     }
 

@@ -27,7 +27,41 @@ sourceSets.main.resources {
 }
 
 repositories {
-    // Add here additional repositories if required by some of the dependencies below.
+    mavenCentral()
+
+    maven {
+        url = 'https://modmaven.dev/'
+    }
+    maven {
+        name = 'Modrinth Maven'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
+    maven {
+        name = 'CurseForge Maven'
+        url = 'https://cursemaven.com'
+        content {
+            includeGroup 'curse.maven'
+        }
+    }
+    maven {
+        name = 'create maven'
+        url = 'https://maven.tterrag.com/'
+        content {
+            includeGroup 'com.simibubi.create'
+            includeGroup 'com.jozufozu.flywheel'
+        }
+    }
+    maven {
+        name = 'CreateMaven'
+        url = 'https://maven.createmod.net'
+    }
+
+    flatDir {
+        dirs 'libs'
+    }
 }
 
 base {
@@ -118,6 +152,25 @@ configurations {
 }
 
 dependencies {
+    // Create stack: dev runs only via localRuntime (not compile classpath / not published for dependents).
+    localRuntime("com.simibubi.create:create-${minecraft_version}:${create_version}") {
+        exclude group: 'com.tterrag.registrate', module: 'Registrate'
+        exclude group: 'dev.ftb.mods', module: 'ftb-chunks-neoforge'
+        exclude group: 'dev.ftb.mods', module: 'ftb-teams-neoforge'
+        exclude group: 'dev.ftb.mods', module: 'ftb-library-neoforge'
+        exclude group: 'info.journeymap', module: 'journeymap-api-neoforge'
+        exclude group: 'dev.architectury', module: 'architectury-neoforge'
+        exclude group: 'cc.tweaked', module: 'cc-tweaked-1.21.1-forge'
+    }
+    localRuntime "net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}"
+    localRuntime "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
+
+    // Other dev-only jars in /libs (not published); skip Create/Flywheel/Ponder filenames so Maven deps are not duplicated.
+    localRuntime fileTree(dir: layout.projectDirectory.dir('libs'), include: ['*.jar']).matching {
+        exclude 'flywheel*.jar'
+        exclude 'ponder*.jar'
+    }
+
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"

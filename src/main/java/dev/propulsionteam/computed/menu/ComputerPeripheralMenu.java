@@ -44,26 +44,30 @@ public class ComputerPeripheralMenu extends AbstractContainerMenu {
 
     @Override
     public ItemStack quickMoveStack(Player player, int index) {
-        ItemStack out = ItemStack.EMPTY;
+        ItemStack before = ItemStack.EMPTY;
         Slot slot = this.slots.get(index);
         if (slot != null && slot.hasItem()) {
-            ItemStack inSlot = slot.getItem();
-            out = inSlot.copy();
+            ItemStack current = slot.getItem();
+            before = current.copy();
             int containerSlots = ComputerBlockEntity.CONTAINER_SIZE;
             if (index < containerSlots) {
-                if (!moveItemStackTo(inSlot, containerSlots, this.slots.size(), true)) {
+                if (!moveItemStackTo(current, containerSlots, this.slots.size(), true)) {
                     return ItemStack.EMPTY;
                 }
-            } else if (!moveItemStackTo(inSlot, 0, containerSlots, false)) {
+            } else if (!moveItemStackTo(current, 0, containerSlots, false)) {
                 return ItemStack.EMPTY;
             }
-            if (inSlot.isEmpty()) {
+            if (current.isEmpty()) {
                 slot.setByPlayer(ItemStack.EMPTY);
             } else {
                 slot.setChanged();
             }
+            if (before.getCount() == current.getCount()) {
+                return ItemStack.EMPTY;
+            }
+            slot.onTake(player, current);
         }
-        return out;
+        return before;
     }
 
     @Override

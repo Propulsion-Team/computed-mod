@@ -59,7 +59,7 @@ public final class FunctionDefinitionStore {
             UUID id = c.getUUID("Id");
             String name = c.getString("Name");
             CompoundTag body = c.getCompound("Body");
-            definitions.put(id, new Definition(id, name, body));
+            definitions.put(id, new Definition(id, name, body.copy()));
         }
     }
 

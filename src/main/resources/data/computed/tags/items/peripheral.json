@@ -1,0 +1,9 @@
+{
+  "replace": false,
+  "values": [
+    "computed:redstone_link",
+    "computed:redstone_emitter",
+    "computed:peripheral_connector",
+    "simulated:linked_typewriter"
+  ]
+}

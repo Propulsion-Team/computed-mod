@@ -1,4 +1,4 @@
-package dev.propulsionteam.computed.content.nodes;
+package dev.propulsionteam.computed.content.nodes.vanilla;
 
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.elements.WButton;

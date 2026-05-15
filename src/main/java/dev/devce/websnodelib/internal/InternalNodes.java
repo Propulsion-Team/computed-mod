@@ -2,12 +2,13 @@ package dev.devce.websnodelib.internal;
 
 import dev.devce.websnodelib.api.NodeMenuRegistry;
 import dev.devce.websnodelib.api.NodeRegistry;
+import dev.devce.websnodelib.api.CounterNode;
 import dev.devce.websnodelib.api.FunctionCardNode;
 import dev.devce.websnodelib.api.FunctionEndNode;
 import dev.devce.websnodelib.api.FunctionStartNode;
+import dev.devce.websnodelib.api.PassOnNthRisingEdgeNode;
 import dev.devce.websnodelib.api.WGraph;
 import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WButton;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.devce.websnodelib.api.elements.WSlider;
 import dev.devce.websnodelib.api.elements.WTextField;
@@ -27,6 +28,9 @@ public final class InternalNodes {
     private static final ResourceLocation CAT_IO = id("menu_io");
     private static final ResourceLocation CAT_VISUALS = id("menu_visuals");
     private static final ResourceLocation CAT_ORGANIZATION = id("menu_organization");
+    private static final ResourceLocation CAT_LOGIC = id("menu_logic");
+    private static final ResourceLocation CAT_LOGIC_BINARY = id("menu_logic_binary");
+    private static final ResourceLocation CAT_LOGIC_UNARY = id("menu_logic_unary");
 
     @FunctionalInterface
     private interface BinaryOp {
@@ -38,11 +42,17 @@ public final class InternalNodes {
         double apply(double a);
     }
 
+    @FunctionalInterface
+    private interface LogicBinaryOp {
+        boolean apply(boolean a, boolean b);
+    }
+
     private InternalNodes() {}
 
     public static void register() {
         registerMenuCategories();
         registerMathNodes();
+        registerLogicNodes();
         registerOtherNodes();
         registerFunctionNodes();
         registerMenuEntries();
@@ -70,6 +80,9 @@ public final class InternalNodes {
         NodeMenuRegistry.registerCategory(CAT_IO, Component.literal("I/O"), NodeMenuRegistry.ROOT);
         NodeMenuRegistry.registerCategory(CAT_VISUALS, Component.literal("Visuals"), NodeMenuRegistry.ROOT);
         NodeMenuRegistry.registerCategory(CAT_ORGANIZATION, Component.literal("Organization"), NodeMenuRegistry.ROOT);
+        NodeMenuRegistry.registerCategory(CAT_LOGIC, Component.literal("Logic"), NodeMenuRegistry.ROOT);
+        NodeMenuRegistry.registerCategory(CAT_LOGIC_BINARY, Component.literal("Binary"), CAT_LOGIC);
+        NodeMenuRegistry.registerCategory(CAT_LOGIC_UNARY, Component.literal("Unary"), CAT_LOGIC);
     }
 
     private static void registerMathNodes() {
@@ -98,6 +111,43 @@ public final class InternalNodes {
         registerUnary("math_sign", "Sign", a -> Math.signum(a));
 
         registerRandom();
+    }
+
+    private static void registerLogicNodes() {
+        registerLogicBinary("logic_and", "AND", (a, b) -> a && b);
+        registerLogicBinary("logic_or", "OR", (a, b) -> a || b);
+        registerLogicBinary("logic_xor", "XOR", (a, b) -> a ^ b);
+        registerLogicBinary("logic_nand", "NAND", (a, b) -> !(a && b));
+        registerLogicBinary("logic_nor", "NOR", (a, b) -> !(a || b));
+        registerLogicBinary("logic_xnor", "XNOR", (a, b) -> !(a ^ b));
+
+        ResourceLocation notId = id("logic_not");
+        NodeRegistry.register(notId, (x, y) -> {
+            WNode node = new WNode(notId, "NOT", x, y);
+            node.addInput("A", 0xFF00FF88);
+            node.addOutput("Out", 0xFFFF5555);
+            node.addElement(new WLabel("NOT"));
+            node.setEvaluator(
+                    n -> n.getOutputs().get(0).setValue(n.getInputs().get(0).getValue() > 0.5 ? 0.0 : 1.0));
+            return node;
+        });
+    }
+
+    private static void registerLogicBinary(String path, String title, LogicBinaryOp op) {
+        ResourceLocation nid = id(path);
+        NodeRegistry.register(nid, (x, y) -> {
+            WNode node = new WNode(nid, title, x, y);
+            node.addInput("A", 0xFF00FF88);
+            node.addInput("B", 0xFF88CCFF);
+            node.addOutput("Out", 0xFFFF5555);
+            node.addElement(new WLabel(title));
+            node.setEvaluator(n -> {
+                boolean a = n.getInputs().get(0).getValue() > 0.5;
+                boolean b = n.getInputs().get(1).getValue() > 0.5;
+                n.getOutputs().get(0).setValue(op.apply(a, b) ? 1.0 : 0.0);
+            });
+            return node;
+        });
     }
 
     private static void registerRandom() {
@@ -242,24 +292,8 @@ public final class InternalNodes {
             return node;
         });
 
-        NodeRegistry.register(id("counter"), (x, y) -> {
-            WNode node = new WNode(id("counter"), "Counter", x, y);
-            node.addOutput("Count", 0xFFFFFFFF);
-
-            WLabel countLabel = new WLabel("0", 0xFFFFFF00);
-            final double[] count = {0};
-
-            node.addElement(new WLabel("Manual Trigger:"));
-            node.addElement(new WButton("Increment", 80, () -> {
-                count[0]++;
-                countLabel.setText(String.valueOf((int) count[0]));
-            }));
-            node.addElement(countLabel);
-
-            node.setEvaluator(n -> n.getOutputs().get(0).setValue(count[0]));
-
-            return node;
-        });
+        NodeRegistry.register(CounterNode.TYPE_ID, CounterNode::new);
+        NodeRegistry.register(PassOnNthRisingEdgeNode.TYPE_ID, PassOnNthRisingEdgeNode::new);
 
         NodeRegistry.register(id("3d_preview"), (x, y) -> {
             WNode node = new WNode(id("3d_preview"), "3D Viewport", x, y);
@@ -344,12 +378,21 @@ public final class InternalNodes {
         add(CAT_SOURCES, "tick", "Tick");
         add(CAT_SOURCES, "oscillator", "Oscillator");
         add(CAT_SOURCES, "counter", "Counter");
+        add(CAT_SOURCES, "pass_every_n", "Pass on Nth rise");
 
         add(CAT_IO, "display", "Display");
 
         add(CAT_VISUALS, "3d_preview", "3D Viewport");
         add(CAT_VISUALS, "rgb_preview", "RGB Preview");
         add(CAT_ORGANIZATION, "tool_section", "Section");
+
+        add(CAT_LOGIC_UNARY, "logic_not", "NOT");
+        add(CAT_LOGIC_BINARY, "logic_and", "AND");
+        add(CAT_LOGIC_BINARY, "logic_or", "OR");
+        add(CAT_LOGIC_BINARY, "logic_xor", "XOR");
+        add(CAT_LOGIC_BINARY, "logic_nand", "NAND");
+        add(CAT_LOGIC_BINARY, "logic_nor", "NOR");
+        add(CAT_LOGIC_BINARY, "logic_xnor", "XNOR");
     }
 
     private static void add(ResourceLocation category, String nodePath, String label) {

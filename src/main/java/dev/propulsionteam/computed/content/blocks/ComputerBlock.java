@@ -3,10 +3,14 @@ package dev.propulsionteam.computed.content.blocks;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import dev.propulsionteam.computed.content.ComputedRegistries;
+import dev.propulsionteam.computed.content.PlacedPeripheralItemData;
+import dev.propulsionteam.computed.content.PeripheralConnectorItem;
 import dev.propulsionteam.computed.content.Peripherals;
 import dev.propulsionteam.computed.network.ComputedNetworking;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -91,6 +95,18 @@ public class ComputerBlock extends Block implements EntityBlock {
                 default -> ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
             };
         }
+        if (!player.isSecondaryUseActive()) {
+            if (!stack.isEmpty()
+                    && !(stack.getItem() instanceof PeripheralConnectorItem)
+                    && Peripherals.isBindableHeldPeripheral(stack)) {
+                if (level.isClientSide) {
+                    return ItemInteractionResult.sidedSuccess(level.isClientSide);
+                }
+                if (PlacedPeripheralItemData.tryBindHeldItemToComputer(stack, level, pos, player)) {
+                    return ItemInteractionResult.CONSUME;
+                }
+            }
+        }
         InteractionResult edit = openNodeEditor(level, pos, player);
         return switch (edit) {
             case SUCCESS -> ItemInteractionResult.sidedSuccess(level.isClientSide);
@@ -123,7 +139,9 @@ public class ComputerBlock extends Block implements EntityBlock {
         if (!(player instanceof ServerPlayer serverPlayer)) {
             return InteractionResult.PASS;
         }
-        PacketDistributor.sendToPlayer(serverPlayer, ComputedNetworking.openPayload(pos, computer.getGraphData()));
+        CompoundTag bundle = computer.getGraphData();
+        Peripherals.writePeripheralUnlockTag(computer, bundle);
+        PacketDistributor.sendToPlayer(serverPlayer, ComputedNetworking.openPayload(pos, bundle));
         return InteractionResult.CONSUME;
     }
 

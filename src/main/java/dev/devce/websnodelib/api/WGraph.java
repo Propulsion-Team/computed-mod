@@ -4,8 +4,10 @@ import dev.devce.websnodelib.api.elements.WSlider;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
@@ -41,6 +43,11 @@ public class WGraph {
         private int height;
         /** Editor-only: section background tint (ARGB). */
         private int bodyColorArgb = DEFAULT_BODY_COLOR_ARGB;
+        /**
+         * Draw / hit-test order for nested sections: 0 = root band, larger = more nested (drawn on top,
+         * receives header clicks first).
+         */
+        private int layer;
 
         public WSection(String name, int x, int y, int width, int height) {
             this.id = UUID.randomUUID();
@@ -69,6 +76,14 @@ public class WGraph {
             this.bodyColorArgb = argb;
         }
 
+        public int getLayer() {
+            return layer;
+        }
+
+        public void setLayer(int layer) {
+            this.layer = Math.max(0, layer);
+        }
+
         private net.minecraft.nbt.CompoundTag save() {
             net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
             tag.putString("id", id.toString());
@@ -78,6 +93,7 @@ public class WGraph {
             tag.putInt("w", width);
             tag.putInt("h", height);
             tag.putInt("bodyArgb", bodyColorArgb);
+            tag.putInt("layer", layer);
             return tag;
         }
 
@@ -102,6 +118,9 @@ public class WGraph {
             if (tag.contains("bodyArgb")) {
                 s.bodyColorArgb = tag.getInt("bodyArgb");
             }
+            if (tag.contains("layer")) {
+                s.layer = Math.max(0, tag.getInt("layer"));
+            }
             return s;
         }
     }
@@ -109,8 +128,18 @@ public class WGraph {
     /** Seconds accumulated toward the next pulse, per tick-node id. */
     private final Map<UUID, double[]> tickAccumSec = new HashMap<>();
 
-    /** Increments on each logical propagate+evaluate when a tick driver is active and a pulse fired. */
+    /**
+     * Increments once after each full {@link #stepConnectionsAndEval(boolean)} (root graph world ticks,
+     * {@link #advanceSimulation(double)} steps, and each {@link #propagateAndEvaluate()} for nested graphs).
+     * Nodes can use it to emit at most once per logical graph step.
+     */
     private int simulationStepCounter = 0;
+
+    /**
+     * While nodes evaluate after wire propagation: whether this pass counts as a tick-node pulse (matches Tick
+     * output high) or, with no tick driver, is always true for that pass.
+     */
+    private boolean evalTickPulseGate;
 
     /**
      * Adds a new node to the graph and recalculates the topological structure.
@@ -118,6 +147,8 @@ public class WGraph {
      */
     public void addNode(WNode node) {
         nodes.add(node);
+        dedupeFunctionBoundaryNodes();
+        pruneDanglingConnections();
         updateTopology();
     }
 
@@ -149,6 +180,16 @@ public class WGraph {
             c.putInt("srcP", conn.sourcePin());
             c.putString("tgt", conn.targetNode().toString());
             c.putInt("tgtP", conn.targetPin());
+            if (conn.waypointXs().length > 0) {
+                net.minecraft.nbt.ListTag wps = new net.minecraft.nbt.ListTag();
+                for (int j = 0; j < conn.waypointXs().length; j++) {
+                    net.minecraft.nbt.CompoundTag w = new net.minecraft.nbt.CompoundTag();
+                    w.putInt("x", conn.waypointXs()[j]);
+                    w.putInt("y", conn.waypointYs()[j]);
+                    wps.add(w);
+                }
+                c.put("wps", wps);
+            }
             connsTag.add(c);
         }
         tag.put("conns", connsTag);
@@ -185,16 +226,80 @@ public class WGraph {
         net.minecraft.nbt.ListTag connsTag = tag.getList("conns", 10);
         for (int i = 0; i < connsTag.size(); i++) {
             net.minecraft.nbt.CompoundTag c = connsTag.getCompound(i);
-            connect(java.util.UUID.fromString(c.getString("src")), c.getInt("srcP"), 
-                    java.util.UUID.fromString(c.getString("tgt")), c.getInt("tgtP"));
+            java.util.UUID src = java.util.UUID.fromString(c.getString("src"));
+            int sp = c.getInt("srcP");
+            java.util.UUID tgt = java.util.UUID.fromString(c.getString("tgt"));
+            int tp = c.getInt("tgtP");
+            if (c.contains("wps")) {
+                net.minecraft.nbt.ListTag wps = c.getList("wps", 10);
+                int[] wx = new int[wps.size()];
+                int[] wy = new int[wps.size()];
+                for (int j = 0; j < wps.size(); j++) {
+                    net.minecraft.nbt.CompoundTag w = wps.getCompound(j);
+                    wx[j] = w.getInt("x");
+                    wy[j] = w.getInt("y");
+                }
+                connections.add(new WConnection(src, sp, tgt, tp, wx, wy));
+            } else {
+                connections.add(WConnection.withoutWaypoints(src, sp, tgt, tp));
+            }
         }
         net.minecraft.nbt.ListTag sectionsTag = tag.getList("sections", 10);
         for (int i = 0; i < sectionsTag.size(); i++) {
             sections.add(WSection.load(sectionsTag.getCompound(i)));
         }
+        dedupeFunctionBoundaryNodes();
+        pruneDanglingConnections();
         tickAccumSec.clear();
         simulationStepCounter = 0;
         updateTopology();
+    }
+
+    /**
+     * Function inner graphs must have at most one {@link FunctionStartNode} and one {@link FunctionEndNode}.
+     * Keeps the first of each in list order and removes extras (and connections touching them).
+     */
+    private void dedupeFunctionBoundaryNodes() {
+        boolean haveStart = false;
+        boolean haveEnd = false;
+        List<WNode> extras = new ArrayList<>();
+        for (WNode n : nodes) {
+            if (n instanceof FunctionStartNode) {
+                if (haveStart) {
+                    extras.add(n);
+                } else {
+                    haveStart = true;
+                }
+            } else if (n instanceof FunctionEndNode) {
+                if (haveEnd) {
+                    extras.add(n);
+                } else {
+                    haveEnd = true;
+                }
+            }
+        }
+        if (extras.isEmpty()) {
+            return;
+        }
+        Set<UUID> extraIds = new HashSet<>();
+        for (WNode n : extras) {
+            extraIds.add(n.getId());
+        }
+        connections.removeIf(
+                c -> extraIds.contains(c.sourceNode()) || extraIds.contains(c.targetNode()));
+        nodes.removeAll(extras);
+    }
+
+    /** Removes connections whose endpoints are not present (e.g. skipped nodes while loading). */
+    private void pruneDanglingConnections() {
+        if (connections.isEmpty()) {
+            return;
+        }
+        Set<UUID> ids = new HashSet<>();
+        for (WNode n : nodes) {
+            ids.add(n.getId());
+        }
+        connections.removeIf(c -> !ids.contains(c.sourceNode()) || !ids.contains(c.targetNode()));
     }
 
     /**
@@ -205,8 +310,40 @@ public class WGraph {
      * @param targetPin Index of the input pin.
      */
     public void connect(UUID sourceNode, int sourcePin, UUID targetNode, int targetPin) {
-        connections.add(new WConnection(sourceNode, sourcePin, targetNode, targetPin));
+        connections.add(WConnection.withoutWaypoints(sourceNode, sourcePin, targetNode, targetPin));
         updateTopology();
+    }
+
+    /** Like {@link #connect(UUID, int, UUID, int)} but preserves editor spline waypoints (paste, tools). */
+    public void connect(WConnection connection) {
+        connections.add(connection);
+        updateTopology();
+    }
+
+    /**
+     * Moves editor spline control points for every connection whose source or target is in {@code nodeIds}.
+     * Call with incremental {@code dx}/{@code dy} while dragging those nodes (selection, section bundle, etc.).
+     */
+    public void shiftWaypointsForConnectionsTouching(Collection<UUID> nodeIds, int dx, int dy) {
+        if (nodeIds == null || nodeIds.isEmpty() || (dx == 0 && dy == 0)) {
+            return;
+        }
+        for (int i = 0; i < connections.size(); i++) {
+            WConnection c = connections.get(i);
+            if (!nodeIds.contains(c.sourceNode()) && !nodeIds.contains(c.targetNode())) {
+                continue;
+            }
+            if (c.waypointXs().length == 0) {
+                continue;
+            }
+            int[] nxs = java.util.Arrays.copyOf(c.waypointXs(), c.waypointXs().length);
+            int[] nys = java.util.Arrays.copyOf(c.waypointYs(), c.waypointYs().length);
+            for (int j = 0; j < nxs.length; j++) {
+                nxs[j] += dx;
+                nys[j] += dy;
+            }
+            connections.set(i, c.withWaypoints(nxs, nys));
+        }
     }
 
     /**
@@ -236,6 +373,14 @@ public class WGraph {
         return simulationStepCounter;
     }
 
+    /**
+     * While a node {@link WNode#evaluate()} runs inside this graph, returns whether this step is a tick pulse
+     * (same instants as the Tick node's output) or always true when the graph has no tick driver.
+     */
+    public boolean isEvalTickPulseGate() {
+        return evalTickPulseGate;
+    }
+
     /** True if this graph contains a {@link #TICK_NODE_TYPE} node (stepped simulation). */
     public boolean usesTickDriver() {
         for (WNode n : nodes) {
@@ -258,13 +403,13 @@ public class WGraph {
             deltaSeconds = 1.0e-4;
         }
         if (!usesTickDriver()) {
-            stepConnectionsAndEval();
+            stepConnectionsAndEval(true);
             simulationStepCounter++;
             return;
         }
         boolean pulse = prepareTickDrivers(deltaSeconds);
         if (pulse) {
-            stepConnectionsAndEval();
+            stepConnectionsAndEval(true);
             simulationStepCounter++;
         }
     }
@@ -281,10 +426,11 @@ public class WGraph {
         if (deltaSeconds <= 0) {
             deltaSeconds = 1.0e-4;
         }
+        boolean tickPulse = true;
         if (usesTickDriver()) {
-            prepareTickDrivers(deltaSeconds);
+            tickPulse = prepareTickDrivers(deltaSeconds);
         }
-        stepConnectionsAndEval();
+        stepConnectionsAndEval(tickPulse);
         simulationStepCounter++;
     }
 
@@ -339,13 +485,33 @@ public class WGraph {
 
     /**
      * Single propagation + evaluation pass (used by nested {@link FunctionCardNode} bodies and live preview).
+     * Increments {@link #getSimulationStepCounter()} afterward so nested graphs advance a logical step counter
+     * every time the inner graph runs.
      */
     public void propagateAndEvaluate() {
-        stepConnectionsAndEval();
+        stepConnectionsAndEval(true);
+        simulationStepCounter++;
     }
 
     /** One logical step: propagate all connections, then evaluate every node. */
-    private void stepConnectionsAndEval() {
+    private void stepConnectionsAndEval(boolean tickPulseGate) {
+        evalTickPulseGate = tickPulseGate;
+        try {
+            propagateConnections();
+            for (WNode node : nodes) {
+                node.bindEvaluationGraph(this);
+                try {
+                    node.evaluate();
+                } finally {
+                    node.bindEvaluationGraph(null);
+                }
+            }
+        } finally {
+            evalTickPulseGate = false;
+        }
+    }
+
+    private void propagateConnections() {
         for (WConnection conn : connections) {
             WNode source = findNode(conn.sourceNode());
             WNode target = findNode(conn.targetNode());
@@ -365,9 +531,6 @@ public class WGraph {
             target.getInputs().get(tp).setConnected(true);
             source.getOutputs().get(sp).setConnected(true);
         }
-        for (WNode node : nodes) {
-            node.evaluate();
-        }
     }
 
     /**
@@ -381,8 +544,9 @@ public class WGraph {
 
     /**
      * Updates the topological structure of the graph.
-     * Calculates the "depth" of each node starting from root nodes (nodes with no inputs).
-     * This depth is used for animation synchronization and processing order.
+     * Assigns each node a depth starting from roots (no incoming connections). Depth is used for animation
+     * sync; it is capped at {@code nodes.size() - 1} so feedback cycles cannot drive unbounded growth (which
+     * would hang this BFS).
      */
     public void updateTopology() {
         // Reset depths
@@ -405,11 +569,13 @@ public class WGraph {
             }
         }
         
-        // BFS to propagate depth
+        // BFS to propagate depth (longest-ish path from roots). Capped so cycles cannot grow depth forever
+        // (otherwise the queue never empties and the client/server hangs on every connect).
+        int maxDepth = Math.max(0, nodes.size() - 1);
         while (!queue.isEmpty()) {
             WNode current = queue.poll();
-            int nextDepth = current.getTopoDepth() + 1;
-            
+            int nextDepth = Math.min(current.getTopoDepth() + 1, maxDepth);
+
             for (WConnection conn : connections) {
                 if (conn.sourceNode().equals(current.getId())) {
                     WNode target = findNode(conn.targetNode());

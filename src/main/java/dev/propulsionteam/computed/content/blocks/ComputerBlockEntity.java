@@ -2,18 +2,23 @@ package dev.propulsionteam.computed.content.blocks;
 
 import dev.devce.websnodelib.api.FunctionCardNode;
 import dev.devce.websnodelib.api.FunctionDefinitionStore;
-import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WGraph;
 import dev.devce.websnodelib.api.WNode;
 import dev.propulsionteam.computed.content.ComputedRegistries;
+import dev.propulsionteam.computed.content.ComputedTags;
+import dev.propulsionteam.computed.content.PlacedPeripheralLink;
 import dev.propulsionteam.computed.content.Peripherals;
-import dev.propulsionteam.computed.content.nodes.RedstonePortNode;
+import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;
+import dev.propulsionteam.computed.content.nodes.vanilla.RedstonePortNode;
+import dev.propulsionteam.computed.integration.CreateRedstoneLinkBridge;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
@@ -31,8 +36,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.HashMap;
-import java.util.Map;
 
 public class ComputerBlockEntity extends BaseContainerBlockEntity {
     public static final int CONTAINER_SIZE = 9;
@@ -43,6 +46,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     private final FunctionDefinitionStore functionDefinitions = new FunctionDefinitionStore();
     /** Weak redstone emitted toward each {@link Direction} (neighbor on that side sees this level). */
     private final int[] redstoneEmitted = new int[6];
+    private final CreateRedstoneLinkBridge createRedstoneLinks = new CreateRedstoneLinkBridge();
+    /** In-world blocks linked to this computer (thrusters, etc.); hardware id is the block registry id. */
+    private final List<PlacedPeripheralLink> placedPeripheralLinks = new ArrayList<>();
+    private int nextPlacedPeripheralInstanceId = 1;
 
     public ComputerBlockEntity(BlockPos pos, BlockState state) {
         super(ComputedRegistries.COMPUTER_BLOCK_ENTITY.get(), pos, state);
@@ -56,13 +63,37 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         if (level.isClientSide) {
             return;
         }
-        be.graph.advanceSimulationInWorld(1.0 / WGraph.MAX_TICK_RATE);
+        Level lvl = be.getLevel();
+        if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
+            be.createRedstoneLinks.clear(lvl);
+            be.createRedstoneLinks.syncFromGraph(lvl, be, be.graph);
+        }
+        be.prunePlacedPeripherals();
+        ComputedGraphExecution.withHost(be, () -> be.graph.advanceSimulationInWorld(1.0 / WGraph.MAX_TICK_RATE));
+        if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
+            be.createRedstoneLinks.pushTransmitters(lvl);
+        }
+        be.mutePeripheralsWithoutHardware(be.graph);
         be.refreshRedstoneFromGraph();
     }
 
     /** Redstone wire / blocks query this from the neighbor toward the computer. */
     public int getEmittedRedstone(Direction towardNeighbor) {
         return redstoneEmitted[towardNeighbor.ordinal()];
+    }
+
+    /** Zeros outputs for peripheral nodes with no matching item in this computer (including nested function graphs). */
+    private void mutePeripheralsWithoutHardware(WGraph g) {
+        for (WNode n : g.getNodes()) {
+            if (n instanceof FunctionCardNode fc) {
+                mutePeripheralsWithoutHardware(fc.getInnerGraph());
+            }
+            if (Peripherals.isPeripheralNodeType(n.getTypeId()) && !hasPeripheralEquipped(n.getTypeId())) {
+                for (var out : n.getOutputs()) {
+                    out.setValue(0.0);
+                }
+            }
+        }
     }
 
     private void refreshRedstoneFromGraph() {
@@ -74,6 +105,9 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         List<RedstonePortNode> ports = new ArrayList<>();
         collectRedstonePorts(graph, ports);
         for (RedstonePortNode rp : ports) {
+            if (!hasPeripheralEquipped(RedstonePortNode.TYPE_ID)) {
+                continue;
+            }
             WNode n = rp;
             if (n.getInputs().size() < 2) {
                 continue;
@@ -138,7 +172,6 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     @Override
     public void setItem(int slot, ItemStack stack) {
         super.setItem(slot, stack);
-        syncPeripheralNodesWithInventory();
     }
 
     public WGraph getGraph() {
@@ -153,14 +186,16 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     }
 
     public void applyGraphFromNetwork(CompoundTag tag) {
-        if (tag.contains("ComputerGraph", Tag.TAG_COMPOUND)) {
-            graph.load(tag.getCompound("ComputerGraph"));
+        CompoundTag copy = tag.copy();
+        Peripherals.stripEditorOnlyTags(copy);
+        if (copy.contains("ComputerGraph", Tag.TAG_COMPOUND)) {
+            graph.load(copy.getCompound("ComputerGraph"));
             functionDefinitions.clear();
-            if (tag.contains("ComputerFunctions")) {
-                functionDefinitions.load(tag.getList("ComputerFunctions", Tag.TAG_COMPOUND));
+            if (copy.contains("ComputerFunctions")) {
+                functionDefinitions.load(copy.getList("ComputerFunctions", Tag.TAG_COMPOUND));
             }
         } else {
-            graph.load(tag);
+            graph.load(copy);
             functionDefinitions.clear();
         }
         FunctionCardNode.applyLibraryToInnerGraphs(graph, functionDefinitions);
@@ -192,39 +227,105 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         return false;
     }
 
-    private void syncPeripheralNodesWithInventory() {
+    /**
+     * True if the hardware token required for {@code nodeTypeId} is satisfied by an inventory peripheral item or an
+     * in-world linked block (see {@link #addPlacedPeripheralFromWorld}).
+     */
+    public boolean hasPeripheralEquipped(ResourceLocation nodeTypeId) {
+        ResourceLocation requiredItem = Peripherals.peripheralItemRequiredForNodeType(nodeTypeId);
+        if (requiredItem == null) {
+            return true;
+        }
+        for (int i = 0; i < CONTAINER_SIZE; i++) {
+            ItemStack st = getItem(i);
+            if (!st.isEmpty()
+                    && Peripherals.isPeripheral(st)
+                    && BuiltInRegistries.ITEM.getKey(st.getItem()).equals(requiredItem)) {
+                return true;
+            }
+        }
+        Level lvl = this.level;
+        return lvl != null && placedHardwareProvides(lvl, requiredItem);
+    }
+
+    private boolean placedHardwareProvides(Level level, ResourceLocation requiredToken) {
+        for (PlacedPeripheralLink link : placedPeripheralLinks) {
+            if (!link.kind().equals(requiredToken)) {
+                continue;
+            }
+            if (isPlacedLinkStillValid(level, link)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isPlacedLinkStillValid(Level level, PlacedPeripheralLink link) {
+        BlockState st = level.getBlockState(link.pos());
+        if (st.isAir() || !Peripherals.isPlacedPeripheralLinkTargetState(st)) {
+            return false;
+        }
+        return BuiltInRegistries.BLOCK.getKey(st.getBlock()).equals(link.kind());
+    }
+
+    private void prunePlacedPeripherals() {
         Level lvl = this.level;
         if (lvl == null || lvl.isClientSide) {
             return;
         }
-        Map<ResourceLocation, CompoundTag> savedPeripheralState = new HashMap<>();
-        List<WNode> toRemove = new ArrayList<>();
-        for (WNode n : graph.getNodes()) {
-            if (Peripherals.isPeripheralNodeType(n.getTypeId())) {
-                savedPeripheralState.putIfAbsent(n.getTypeId(), n.save().copy());
-                toRemove.add(n);
-            }
+        boolean removed = placedPeripheralLinks.removeIf(link -> !isPlacedLinkStillValid(lvl, link));
+        if (removed) {
+            setChanged();
         }
-        for (WNode n : toRemove) {
-            graph.removeNode(n);
+    }
+
+    /**
+     * Registers an already-placed block as linked hardware. The block must be in {@link ComputedTags.Blocks#PLACED_PERIPHERAL_LINK_TARGETS}
+     * and within range of this computer.
+     */
+    public boolean addPlacedPeripheralFromWorld(Level level, BlockPos pos, BlockState state) {
+        if (level.isClientSide() || !Peripherals.isPlacedPeripheralLinkTargetState(state)) {
+            return false;
         }
-        for (int i = 0; i < CONTAINER_SIZE; i++) {
-            ItemStack st = getItem(i);
-            if (st.isEmpty()) {
-                continue;
-            }
-            ResourceLocation nodeId = Peripherals.nodeTypeFor(st);
-            WNode node = NodeRegistry.createNode(nodeId, 40 + (i % 3) * 88, 48 + (i / 3) * 72);
-            if (node != null) {
-                CompoundTag prev = savedPeripheralState.get(nodeId);
-                if (prev != null) {
-                    node.load(prev.copy());
+        if (worldPosition.distSqr(pos) > 64 * 64) {
+            return false;
+        }
+        ResourceLocation kind = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        for (int i = 0; i < placedPeripheralLinks.size(); i++) {
+            PlacedPeripheralLink existing = placedPeripheralLinks.get(i);
+            if (existing.pos().equals(pos)) {
+                if (existing.kind().equals(kind)) {
+                    return true;
                 }
-                graph.addNode(node);
+                placedPeripheralLinks.remove(i);
+                break;
             }
         }
+        int id = nextPlacedPeripheralInstanceId++;
+        placedPeripheralLinks.add(new PlacedPeripheralLink(pos.immutable(), kind, id));
         setChanged();
-        lvl.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_ALL);
+        return true;
+    }
+
+    public List<PlacedPeripheralLink> placedPeripheralLinksView() {
+        return List.copyOf(placedPeripheralLinks);
+    }
+
+    public boolean isPlacedPeripheralLinkActive(PlacedPeripheralLink link) {
+        Level lvl = this.level;
+        return lvl != null && isPlacedLinkStillValid(lvl, link);
+    }
+
+    @Nullable
+    public BlockPos findActivePlacedHardware(ResourceLocation blockKind, int instanceId) {
+        for (PlacedPeripheralLink link : placedPeripheralLinks) {
+            if (link.kind().equals(blockKind)
+                    && link.instanceId() == instanceId
+                    && isPlacedPeripheralLinkActive(link)) {
+                return link.pos();
+            }
+        }
+        return null;
     }
 
     @Override
@@ -240,9 +341,28 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
             functionDefinitions.clear();
         }
         hydrateFunctionCardsFromLibrary();
-        if (level != null && !level.isClientSide) {
-            syncPeripheralNodesWithInventory();
+        placedPeripheralLinks.clear();
+        nextPlacedPeripheralInstanceId = 1;
+        if (tag.contains("PlacedPeripheralLinks", Tag.TAG_LIST)) {
+            ListTag list = tag.getList("PlacedPeripheralLinks", Tag.TAG_COMPOUND);
+            for (int i = 0; i < list.size(); i++) {
+                CompoundTag e = list.getCompound(i);
+                if (e.contains("Pos", Tag.TAG_LONG)
+                        && e.contains("Kind", Tag.TAG_STRING)
+                        && e.contains("Id", Tag.TAG_INT)) {
+                    placedPeripheralLinks.add(
+                            new PlacedPeripheralLink(
+                                    BlockPos.of(e.getLong("Pos")),
+                                    ResourceLocation.parse(e.getString("Kind")),
+                                    e.getInt("Id")));
+                }
+            }
         }
+        if (tag.contains("PlacedPeripheralNextId", Tag.TAG_INT)) {
+            nextPlacedPeripheralInstanceId = Math.max(1, tag.getInt("PlacedPeripheralNextId"));
+        }
+        int maxSeen = placedPeripheralLinks.stream().mapToInt(PlacedPeripheralLink::instanceId).max().orElse(0);
+        nextPlacedPeripheralInstanceId = Math.max(nextPlacedPeripheralInstanceId, maxSeen + 1);
     }
 
     @Override
@@ -251,6 +371,16 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         ContainerHelper.saveAllItems(tag, items, true, registries);
         tag.put("ComputerGraph", graph.save());
         tag.put("ComputerFunctions", functionDefinitions.saveList());
+        ListTag list = new ListTag();
+        for (PlacedPeripheralLink link : placedPeripheralLinks) {
+            CompoundTag e = new CompoundTag();
+            e.putLong("Pos", link.pos().asLong());
+            e.putString("Kind", link.kind().toString());
+            e.putInt("Id", link.instanceId());
+            list.add(e);
+        }
+        tag.put("PlacedPeripheralLinks", list);
+        tag.putInt("PlacedPeripheralNextId", nextPlacedPeripheralInstanceId);
     }
 
     @Override

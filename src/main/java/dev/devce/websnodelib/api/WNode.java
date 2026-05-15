@@ -26,6 +26,8 @@ public class WNode {
     private Evaluator evaluator = (node) -> {};
     private int topoDepth = 0;
     private boolean selected = false;
+    /** Non-null only while {@link #evaluate()} runs as part of a {@link WGraph} step. */
+    private transient WGraph evaluationGraph;
 
     /**
      * Interface for custom node behavior.
@@ -48,6 +50,15 @@ public class WNode {
      */
     public void evaluate() {
         this.evaluator.evaluate(this);
+    }
+
+    /** @see WGraph#isEvalTickPulseGate() */
+    public WGraph evaluationGraph() {
+        return evaluationGraph;
+    }
+
+    void bindEvaluationGraph(WGraph graph) {
+        this.evaluationGraph = graph;
     }
 
     /**
