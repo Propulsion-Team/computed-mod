@@ -1,7 +1,0 @@
-{
-  "replace": false,
-  "values": [
-    "#computed:peripheral",
-    "simulated:linked_typewriter"
-  ]
-}
