@@ -100,9 +100,6 @@ public final class CreateRedstoneLinkBridge {
     private void tryAddSender(Level level, ComputerBlockEntity computer, Object handler, CreateRedstoneLinkSenderNode s) {
         ItemStack a = s.redFrequency();
         ItemStack b = s.blueFrequency();
-        if (a.isEmpty() || b.isEmpty()) {
-            return;
-        }
         Object couple = makeCouple(a, b);
         if (couple == null) {
             return;
@@ -118,9 +115,6 @@ public final class CreateRedstoneLinkBridge {
     private void tryAddReceiver(Level level, ComputerBlockEntity computer, Object handler, CreateRedstoneLinkReceiverNode r) {
         ItemStack a = r.redFrequency();
         ItemStack b = r.blueFrequency();
-        if (a.isEmpty() || b.isEmpty()) {
-            return;
-        }
         Object couple = makeCouple(a, b);
         if (couple == null) {
             return;
@@ -242,6 +236,18 @@ public final class CreateRedstoneLinkBridge {
                         if ("toString".equals(name)) {
                             return "ComputedVirtualLink";
                         }
+                        if (method.isDefault()) {
+                            return InvocationHandler.invokeDefault(proxy, method, args);
+                        }
+                        Class<?> ret = method.getReturnType();
+                        if (ret == boolean.class) return false;
+                        if (ret == byte.class) return (byte) 0;
+                        if (ret == short.class) return (short) 0;
+                        if (ret == int.class) return 0;
+                        if (ret == long.class) return 0L;
+                        if (ret == float.class) return 0f;
+                        if (ret == double.class) return 0d;
+                        if (ret == char.class) return (char) 0;
                         return null;
                     };
             return Proxy.newProxyInstance(cl, new Class<?>[] {iface}, h);
