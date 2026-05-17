@@ -4,6 +4,9 @@ import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.blocks.ComputerBlock;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockItem;
+import dev.propulsionteam.computed.content.monitors.MonitorBlock;
+import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
+import dev.propulsionteam.computed.content.monitors.MonitorBlockItem;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.BlockItem;
@@ -67,6 +70,20 @@ public final class ComputedRegistries {
                     "computer",
                     () -> BlockEntityType.Builder.of(ComputerBlockEntity::new, COMPUTER_BLOCK.get()).build(null));
 
+    public static final DeferredBlock<MonitorBlock> MONITOR_BLOCK =
+            BLOCKS.register(
+                    "monitor",
+                    props -> new MonitorBlock(
+                            BlockBehaviour.Properties.ofFullCopy(Blocks.IRON_BLOCK).noOcclusion()));
+    public static final DeferredItem<BlockItem> MONITOR_BLOCK_ITEM =
+            ITEMS.register(
+                    "monitor",
+                    () -> new MonitorBlockItem(MONITOR_BLOCK.get(), new Item.Properties()));
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<MonitorBlockEntity>> MONITOR_BLOCK_ENTITY =
+            BLOCK_ENTITY_TYPES.register(
+                    "monitor",
+                    () -> BlockEntityType.Builder.of(MonitorBlockEntity::new, MONITOR_BLOCK.get()).build(null));
+
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> MAIN_TAB =
             CREATIVE_MODE_TABS.register(
                     "main",
@@ -76,6 +93,7 @@ public final class ComputedRegistries {
                             .icon(() -> COMPUTER_BLOCK_ITEM.get().getDefaultInstance())
                             .displayItems((parameters, output) -> {
                                 output.accept(COMPUTER_BLOCK_ITEM.get());
+                                output.accept(MONITOR_BLOCK_ITEM.get());
                             })
                             .build());
 

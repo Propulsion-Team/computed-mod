@@ -1,6 +1,7 @@
 {
   "replace": false,
   "values": [
-    "computed:computer"
+    "computed:computer",
+    "computed:monitor"
   ]
 }

@@ -1,6 +1,7 @@
 {
   "itemGroup.computed": "Computed",
   "block.computed.computer": "Computer",
+  "block.computed.monitor": "Monitor",
   "item.computed.computer.stored": "Stored Program — %s nodes, %s functions",
 
   "gui.computed.peripheral_not_available": "Not available",
