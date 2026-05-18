@@ -61,6 +61,11 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         if (level.isClientSide) {
             return;
         }
+        // Sable's sub-level tick dispatcher doesn't drop removed BEs from its ticker list the way
+        // vanilla chunks do, so the graph would keep executing after the computer is broken.
+        if (be.isRemoved()) {
+            return;
+        }
         Level lvl = be.getLevel();
         if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
             be.createRedstoneLinks.clear(lvl);
@@ -340,6 +345,15 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
 
     public boolean dropsHandled() {
         return dropsHandled;
+    }
+
+    @Override
+    public void setRemoved() {
+        Level lvl = this.level;
+        if (lvl != null && !lvl.isClientSide) {
+            createRedstoneLinks.clear(lvl);
+        }
+        super.setRemoved();
     }
 
     @Override
