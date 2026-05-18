@@ -33,6 +33,9 @@ public final class CreateRedstoneLinkBridge {
 
     private record Registered(Object proxy, boolean transmit) {}
 
+    /** Per-node bookkeeping for receivers so we can clear their per-mirror map on resync. */
+    private final List<CreateRedstoneLinkReceiverNode> activeReceivers = new ArrayList<>();
+
     public static boolean isCreateLoaded() {
         if (createPresent != null) {
             return createPresent;
@@ -42,6 +45,10 @@ public final class CreateRedstoneLinkBridge {
     }
 
     public void clear(Level level) {
+        for (CreateRedstoneLinkReceiverNode r : activeReceivers) {
+            r.clearMirrors();
+        }
+        activeReceivers.clear();
         if (!isCreateLoaded() || level == null || level.isClientSide) {
             registered.clear();
             return;
@@ -104,12 +111,19 @@ public final class CreateRedstoneLinkBridge {
         if (couple == null) {
             return;
         }
-        Object proxy = makeProxy(computer, couple, true, s::readTransmitStrength, p -> {});
+        Object proxy = makeProxy(computer, computer.getBlockPos(), couple, true, s::readTransmitStrength, (key, p) -> {});
         if (proxy == null) {
             return;
         }
         invokeAdd(handler, level, proxy);
         registered.add(new Registered(proxy, true));
+        for (BlockPos mirrorPos : sableMirrorAnchors(level, computer.getBlockPos())) {
+            Object mirror = makeProxy(computer, mirrorPos, couple, true, s::readTransmitStrength, (key, p) -> {});
+            if (mirror != null) {
+                invokeAdd(handler, level, mirror);
+                registered.add(new Registered(mirror, true));
+            }
+        }
     }
 
     private void tryAddReceiver(Level level, ComputerBlockEntity computer, Object handler, CreateRedstoneLinkReceiverNode r) {
@@ -119,12 +133,47 @@ public final class CreateRedstoneLinkBridge {
         if (couple == null) {
             return;
         }
-        Object proxy = makeProxy(computer, couple, false, () -> 0, p -> r.setLinkInputStrength(p));
+        activeReceivers.add(r);
+        Object proxy = makeProxy(computer, computer.getBlockPos(), couple, false, () -> 0, (key, p) -> r.setLinkInputStrengthFor(key, p));
         if (proxy == null) {
             return;
         }
         invokeAdd(handler, level, proxy);
         registered.add(new Registered(proxy, false));
+        for (BlockPos mirrorPos : sableMirrorAnchors(level, computer.getBlockPos())) {
+            Object mirror = makeProxy(computer, mirrorPos, couple, false, () -> 0, (key, p) -> r.setLinkInputStrengthFor(key, p));
+            if (mirror != null) {
+                invokeAdd(handler, level, mirror);
+                registered.add(new Registered(mirror, false));
+            }
+        }
+    }
+
+    /**
+     * Anchors for mirror proxies when Sable is loaded. Create's redstone link network groups by chunk/range,
+     * so a single proxy at the computer's position can't reach links living on sub-levels.
+     * We register one mirror anchored inside each sub-level on the same {@link Level} other than the one
+     * containing the computer (if any). The host-world side is already covered by the primary proxy when
+     * the computer is in the host world.
+     */
+    private static List<BlockPos> sableMirrorAnchors(Level level, BlockPos computerPos) {
+        if (!SableBridge.isLoaded()) {
+            return List.of();
+        }
+        SableBridge.SubLevelHandle computerSub = SableBridge.containing(level, computerPos);
+        BlockPos computerSubAnchor = computerSub == null ? null : SableBridge.representativePos(computerSub);
+        List<BlockPos> out = new ArrayList<>();
+        for (SableBridge.SubLevelHandle sl : SableBridge.allSubLevels(level)) {
+            BlockPos anchor = SableBridge.representativePos(sl);
+            if (anchor == null) {
+                continue;
+            }
+            if (computerSubAnchor != null && anchor.equals(computerSubAnchor)) {
+                continue;
+            }
+            out.add(anchor);
+        }
+        return out;
     }
 
     private static void invokeAdd(Object handler, Level level, Object proxy) {
@@ -190,13 +239,15 @@ public final class CreateRedstoneLinkBridge {
 
     private static Object makeProxy(
             ComputerBlockEntity computer,
+            BlockPos location,
             Object couple,
             boolean transmit,
             java.util.function.IntSupplier transmitLevel,
-            java.util.function.IntConsumer receiveConsumer) {
+            java.util.function.BiConsumer<Object, Integer> receiveConsumer) {
         try {
             Class<?> iface = Class.forName(IRL);
             ClassLoader cl = iface.getClassLoader();
+            BlockPos pinnedLocation = location.immutable();
             InvocationHandler h =
                     (Object proxy, Method method, Object[] args) -> {
                         String name = method.getName();
@@ -207,7 +258,7 @@ public final class CreateRedstoneLinkBridge {
                         }
                         if ("setReceivedStrength".equals(name)) {
                             if (!transmit && args != null && args.length > 0 && args[0] instanceof Number num) {
-                                receiveConsumer.accept(num.intValue());
+                                receiveConsumer.accept(proxy, num.intValue());
                             }
                             return null;
                         }
@@ -225,7 +276,7 @@ public final class CreateRedstoneLinkBridge {
                             return couple;
                         }
                         if ("getLocation".equals(name)) {
-                            return computer.getBlockPos();
+                            return pinnedLocation;
                         }
                         if ("equals".equals(name)) {
                             return proxy == args[0];

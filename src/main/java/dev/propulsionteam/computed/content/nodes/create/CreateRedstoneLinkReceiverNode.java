@@ -6,6 +6,8 @@ import dev.devce.websnodelib.api.elements.WCheckbox;
 import dev.devce.websnodelib.api.elements.WFrequencySlotPair;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
@@ -25,6 +27,11 @@ public final class CreateRedstoneLinkReceiverNode extends WNode {
     private final WCheckbox repeatWhile;
     private boolean prevPowered;
     private int linkStrength;
+    /**
+     * When mirrored across multiple Sable sub-levels, each mirror writes its own observed strength;
+     * the node's effective strength is the max. Keyed by proxy identity so removal is silent.
+     */
+    private final Map<Object, Integer> mirrorStrengths = new IdentityHashMap<>();
     /** Last {@link WGraph#getSimulationStepCounter()} for which repeat mode emitted an Event pulse. */
     private int lastRepeatEmitStep = Integer.MIN_VALUE;
 
@@ -76,5 +83,24 @@ public final class CreateRedstoneLinkReceiverNode extends WNode {
 
     public void setLinkInputStrength(int strength) {
         linkStrength = Mth.clamp(strength, 0, 15);
+    }
+
+    public void setLinkInputStrengthFor(Object mirrorKey, int strength) {
+        int clamped = Mth.clamp(strength, 0, 15);
+        if (clamped == 0) {
+            mirrorStrengths.remove(mirrorKey);
+        } else {
+            mirrorStrengths.put(mirrorKey, clamped);
+        }
+        int max = 0;
+        for (int v : mirrorStrengths.values()) {
+            if (v > max) max = v;
+        }
+        linkStrength = max;
+    }
+
+    public void clearMirrors() {
+        mirrorStrengths.clear();
+        linkStrength = 0;
     }
 }

@@ -58,6 +58,14 @@ repositories {
         name = 'CreateMaven'
         url = 'https://maven.createmod.net'
     }
+    maven {
+        name = 'Sable'
+        url = 'https://maven.ryanhcode.dev/releases'
+        content {
+            includeGroup 'dev.ryanhcode.sable-companion'
+            includeGroup 'dev.ryanhcode.sable'
+        }
+    }
 
     flatDir {
         dirs 'libs'
@@ -164,6 +172,11 @@ dependencies {
     }
     localRuntime "net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}"
     localRuntime "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
+
+    // Sable Companion: compile-only so this mod loads fine without Sable. The companion artifact ships
+    // a ServiceLoader stub (DefaultSableCompanion) that returns null/empty when Sable proper is absent,
+    // but the SableCompanion class itself only exists at runtime if the companion mod is installed.
+    compileOnly "dev.ryanhcode.sable-companion:sable-companion-common-1.21.1:1.6.0"
 
     // Other dev-only jars in /libs (not published); skip Create/Flywheel/Ponder filenames so Maven deps are not duplicated.
     localRuntime fileTree(dir: layout.projectDirectory.dir('libs'), include: ['*.jar']).matching {
