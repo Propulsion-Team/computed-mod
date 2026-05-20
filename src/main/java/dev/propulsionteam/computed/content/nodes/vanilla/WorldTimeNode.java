@@ -1,10 +1,14 @@
 package dev.propulsionteam.computed.content.nodes.vanilla;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
 
@@ -38,5 +42,13 @@ public final class WorldTimeNode extends WNode {
         Level lvl = host.getLevel();
         if (lvl == null || lvl.isClientSide) return 0;
         return lvl.getDayTime();
+    }
+
+    public static final ResourceLocation MENU = ComputedMenuCategories.VANILLA;
+    public static final Component LABEL = Component.literal("World Time");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, WorldTimeNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

@@ -1,9 +1,14 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WPin;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.monitors.widgets.ButtonWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -50,5 +55,14 @@ public final class ButtonWidgetNode extends WNode implements InteractiveWidgetNo
     public void load(net.minecraft.nbt.CompoundTag tag) {
         super.load(tag);
         layout.loadFrom(tag);
+    }
+
+    public static final ResourceLocation TYPE_ID = WidgetNodeIds.BUTTON_WIDGET;
+    public static final ResourceLocation MENU = ComputedMenuCategories.WIDGETS;
+    public static final Component LABEL = Component.literal("Button Widget");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, ButtonWidgetNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

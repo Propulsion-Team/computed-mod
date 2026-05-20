@@ -1,9 +1,13 @@
 package dev.propulsionteam.computed.content.nodes.create;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.elements.WFrequencySlotPair;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
@@ -42,5 +46,18 @@ public final class CreateRedstoneLinkSenderNode extends WNode {
             return 0;
         }
         return Mth.clamp((int) Math.round(getInputs().get(1).getValue()), 0, 15);
+    }
+
+    public static final ResourceLocation MENU = ComputedMenuCategories.CREATE_REDSTONE_LINK;
+    public static final Component LABEL = Component.literal("Sender");
+
+    /** Registers only the node type. Use when the Create menu category should not be added (e.g. Create mod absent). */
+    public static void registerType() {
+        NodeRegistry.register(TYPE_ID, CreateRedstoneLinkSenderNode::new);
+    }
+
+    public static void register() {
+        registerType();
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

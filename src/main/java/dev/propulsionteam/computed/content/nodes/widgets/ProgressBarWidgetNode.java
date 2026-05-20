@@ -1,11 +1,16 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WPin;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.ProgressBarWidget;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 
 public final class ProgressBarWidgetNode extends WNode {
     private final WidgetLayoutFields layout =
@@ -57,5 +62,14 @@ public final class ProgressBarWidgetNode extends WNode {
     public void load(net.minecraft.nbt.CompoundTag tag) {
         super.load(tag);
         layout.loadFrom(tag);
+    }
+
+    public static final ResourceLocation TYPE_ID = WidgetNodeIds.PROGRESS_BAR_WIDGET;
+    public static final ResourceLocation MENU = ComputedMenuCategories.WIDGETS;
+    public static final Component LABEL = Component.literal("Progress Bar Widget");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, ProgressBarWidgetNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

@@ -1,11 +1,16 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WPin;
 import dev.devce.websnodelib.api.elements.WDropdown;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.TextAlignment;
 import dev.propulsionteam.computed.content.monitors.widgets.TextWidget;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 
 import java.util.List;
 
@@ -60,5 +65,14 @@ public final class TextWidgetNode extends WNode {
 
     private static String title(String raw) {
         return raw.charAt(0) + raw.substring(1).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    public static final ResourceLocation TYPE_ID = WidgetNodeIds.TEXT_WIDGET;
+    public static final ResourceLocation MENU = ComputedMenuCategories.WIDGETS;
+    public static final Component LABEL = Component.literal("Text Widget");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, TextWidgetNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

@@ -1,15 +1,19 @@
 package dev.propulsionteam.computed.content.nodes.vanilla;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.elements.WDropdown;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;
 import dev.propulsionteam.computed.content.blocks.ComputerBlock;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -77,5 +81,13 @@ public final class BlockPresenceNode extends WNode {
                 faceDropdown.setSelected(parsed);
             }
         }
+    }
+
+    public static final ResourceLocation MENU = ComputedMenuCategories.VANILLA;
+    public static final Component LABEL = Component.literal("Block Presence");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, BlockPresenceNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

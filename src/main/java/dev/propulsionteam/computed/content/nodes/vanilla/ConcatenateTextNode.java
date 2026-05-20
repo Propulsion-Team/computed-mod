@@ -1,9 +1,13 @@
 package dev.propulsionteam.computed.content.nodes.vanilla;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WPin;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class ConcatenateTextNode extends WNode {
@@ -23,5 +27,13 @@ public final class ConcatenateTextNode extends WNode {
             String concatedString = n.getInputs().get(0).getStringValue() + n.getInputs().get(1).getStringValue();
             n.getOutputs().get(0).setStringValue(concatedString);
         });
+    }
+
+    public static final ResourceLocation MENU = ComputedMenuCategories.VANILLA;
+    public static final Component LABEL = Component.literal("Concatenate Strings");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, ConcatenateTextNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

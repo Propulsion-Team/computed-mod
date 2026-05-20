@@ -179,4 +179,9 @@ public final class FunctionEndNode extends WNode {
         emptyCheckbox.setChecked(emptyReturn);
         rebuildUiAndPins();
     }
+
+    public static void register() {
+        NodeRegistry.register(TYPE_FN_END, FunctionEndNode::new);
+        NodeMenuRegistry.hideFromAddMenu(TYPE_FN_END);
+    }
 }

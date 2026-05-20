@@ -216,4 +216,9 @@ public class FunctionCardNode extends WNode {
         }
         syncPinsFromInner(null);
     }
+
+    public static void register() {
+        NodeRegistry.register(TYPE_FUNCTION_CARD, FunctionCardNode::new);
+        NodeMenuRegistry.hideFromAddMenu(TYPE_FUNCTION_CARD);
+    }
 }

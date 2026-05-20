@@ -2,7 +2,9 @@ package dev.devce.websnodelib.api;
 
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.devce.websnodelib.api.elements.WTextField;
+import dev.devce.websnodelib.internal.MenuCategories;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 
@@ -89,5 +91,13 @@ public final class PassOnNthRisingEdgeNode extends WNode {
         if (tag.contains("EdgesSeen")) {
             edgesSeen = tag.getInt("EdgesSeen");
         }
+    }
+
+    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final Component LABEL = Component.literal("Pass on Nth rise");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, PassOnNthRisingEdgeNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

@@ -170,4 +170,9 @@ public final class FunctionStartNode extends WNode {
         tickCheckbox.setChecked(tickable);
         rebuildUiAndPins();
     }
+
+    public static void register() {
+        NodeRegistry.register(TYPE_FN_START, FunctionStartNode::new);
+        NodeMenuRegistry.hideFromAddMenu(TYPE_FN_START);
+    }
 }

@@ -1,10 +1,13 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WPin;
 import dev.devce.websnodelib.api.elements.WButton;
 import dev.devce.websnodelib.api.elements.WDropdown;
 import dev.devce.websnodelib.api.elements.WLabel;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;
 import dev.propulsionteam.computed.content.blocks.ComputerBlock;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
@@ -121,5 +124,15 @@ public final class PeripheralNode extends WNode {
                 faceDropdown.setSelected(face);
             } catch (IllegalArgumentException ignored) {}
         }
+    }
+
+    public static final net.minecraft.resources.ResourceLocation TYPE_ID = WidgetNodeIds.PERIPHERAL;
+    public static final net.minecraft.resources.ResourceLocation MENU = ComputedMenuCategories.PERIPHERALS;
+    public static final net.minecraft.network.chat.Component LABEL =
+            net.minecraft.network.chat.Component.literal("Monitor");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, PeripheralNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

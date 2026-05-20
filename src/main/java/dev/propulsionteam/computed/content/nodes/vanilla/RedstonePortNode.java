@@ -1,11 +1,15 @@
 package dev.propulsionteam.computed.content.nodes.vanilla;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.elements.WDropdown;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import java.util.List;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 /**
@@ -65,5 +69,13 @@ public final class RedstonePortNode extends WNode {
                 faceDropdown.setSelected(parsed);
             }
         }
+    }
+
+    public static final ResourceLocation MENU = ComputedMenuCategories.VANILLA;
+    public static final Component LABEL = Component.literal("Redstone Output");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, RedstonePortNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

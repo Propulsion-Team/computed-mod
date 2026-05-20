@@ -2,7 +2,9 @@ package dev.devce.websnodelib.api;
 
 import dev.devce.websnodelib.api.elements.WButton;
 import dev.devce.websnodelib.api.elements.WLabel;
+import dev.devce.websnodelib.internal.MenuCategories;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 
@@ -78,5 +80,13 @@ public final class MuxNode extends WNode {
             rebuildUiAndPins();
         }
         super.load(tag);
+    }
+
+    public static final ResourceLocation MENU = MenuCategories.LOGIC_BINARY;
+    public static final Component LABEL = Component.literal("MUX");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, MuxNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

@@ -1,11 +1,16 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
+import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WPin;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.SliderWidget;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 
 public final class SliderWidgetNode extends WNode implements InteractiveWidgetNode {
@@ -73,5 +78,14 @@ public final class SliderWidgetNode extends WNode implements InteractiveWidgetNo
         super.load(tag);
         if (tag.contains("Normalized")) normalized = tag.getDouble("Normalized");
         layout.loadFrom(tag);
+    }
+
+    public static final ResourceLocation TYPE_ID = WidgetNodeIds.SLIDER_WIDGET;
+    public static final ResourceLocation MENU = ComputedMenuCategories.WIDGETS;
+    public static final Component LABEL = Component.literal("Slider Widget");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, SliderWidgetNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }

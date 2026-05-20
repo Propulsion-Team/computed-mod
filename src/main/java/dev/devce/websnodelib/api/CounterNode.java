@@ -4,7 +4,9 @@ import dev.devce.websnodelib.api.elements.WButton;
 import dev.devce.websnodelib.api.elements.WCheckbox;
 import dev.devce.websnodelib.api.elements.WLabel;
 import dev.devce.websnodelib.api.elements.WTextField;
+import dev.devce.websnodelib.internal.MenuCategories;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 
@@ -123,5 +125,13 @@ public final class CounterNode extends WNode {
             count = tag.getDouble("Count");
         }
         refreshCountLabel();
+    }
+
+    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final Component LABEL = Component.literal("Counter");
+
+    public static void register() {
+        NodeRegistry.register(TYPE_ID, CounterNode::new);
+        NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
 }
