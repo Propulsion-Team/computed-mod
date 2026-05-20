@@ -1,0 +1,17 @@
+{
+  "id": "computed:example_multistep",
+  "label": "Clamped Difference",
+  "menuPath": ["Custom", "Examples"],
+  "inputs": [
+    { "name": "A", "color": "#00FF88" },
+    { "name": "B", "color": "#FF5555" }
+  ],
+  "outputs": [
+    { "name": "Diff",   "color": "#FFFFFF",
+      "expression": "d = A - B; clamp(d, -10, 10)" },
+    { "name": "AbsDiff","color": "#FFAA00",
+      "expression": "abs(A - B)" },
+    { "name": "Rising", "color": "#55FF55",
+      "expression": "rising(A > B)" }
+  ]
+}

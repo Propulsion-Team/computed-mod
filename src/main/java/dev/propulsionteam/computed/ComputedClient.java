@@ -5,6 +5,7 @@ import dev.devce.websnodelib.api.FunctionDefinitionStore;
 import dev.devce.websnodelib.api.WGraph;
 import dev.propulsionteam.computed.client.ComputerEditorScreen;
 import dev.propulsionteam.computed.client.ComputerPeripheralScreen;
+import dev.propulsionteam.computed.client.ComputedClientCommands;
 import dev.propulsionteam.computed.content.ComputedRegistries;
 import dev.propulsionteam.computed.content.Peripherals;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
@@ -68,6 +69,7 @@ public class ComputedClient {
 
     private static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
         dev.devce.websnodelib.internal.WebsNodeCommands.register(event.getDispatcher());
+        ComputedClientCommands.register(event.getDispatcher());
     }
 
     @SubscribeEvent

@@ -64,6 +64,23 @@ public final class NodeMenuRegistry {
         HIDDEN_FROM_ADD_MENU.add(nodeType);
     }
 
+    public static void removeNodeEntriesForTypes(Set<ResourceLocation> nodeTypes) {
+        if (nodeTypes == null || nodeTypes.isEmpty()) {
+            return;
+        }
+        ENTRIES.removeIf(e -> nodeTypes.contains(e.nodeType()));
+        EXPLICIT_NODE_TYPES.removeAll(nodeTypes);
+        HIDDEN_FROM_ADD_MENU.removeAll(nodeTypes);
+    }
+
+    public static void removeCategories(Set<ResourceLocation> categoryIds) {
+        if (categoryIds == null || categoryIds.isEmpty()) {
+            return;
+        }
+        ENTRIES.removeIf(e -> categoryIds.contains(e.categoryId()));
+        CATEGORIES.keySet().removeIf(categoryIds::contains);
+    }
+
     public static Category getCategory(ResourceLocation id) {
         return CATEGORIES.get(id);
     }

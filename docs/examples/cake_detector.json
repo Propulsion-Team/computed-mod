@@ -1,0 +1,27 @@
+{
+  "id": "computed:cake_detector",
+  "label": "Cake Detector",
+  "menuPath": ["Custom", "Detectors"],
+  "outputs": [
+    {
+      "name": "Present",
+      "color": "#FF5599",
+      "expression": "comparator(\"front\") > 0"
+    },
+    {
+      "name": "Signal",
+      "color": "#FFAA00",
+      "expression": "comparator(\"front\")"
+    },
+    {
+      "name": "Slices Left",
+      "color": "#FF88AA",
+      "expression": "s = comparator(\"front\"); if(s > 0, s, 0)"
+    },
+    {
+      "name": "Slices Eaten",
+      "color": "#994422",
+      "expression": "s = comparator(\"front\"); if(s > 0, 7 - s, 0)"
+    }
+  ]
+}

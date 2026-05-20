@@ -1,0 +1,18 @@
+{
+  "id": "computed:dirt_detector",
+  "label": "Dirt Detector",
+  "menuPath": ["Custom", "Detectors"],
+  "outputs": [
+    {
+      "name": "Is Dirt",
+      "color": "#8B5E3C",
+      "expression": "block_is(\"minecraft:dirt\", \"front\")"
+    },
+    {
+      "name": "Block ID",
+      "type": "string",
+      "color": "#AAAAAA",
+      "expression": "block_id(\"front\")"
+    }
+  ]
+}

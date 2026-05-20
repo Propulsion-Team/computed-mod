@@ -1,0 +1,12 @@
+{
+  "id": "computed:example_create_kinetic",
+  "label": "Kinetic Monitor",
+  "menuPath": ["Custom", "Examples", "Create"],
+  "inputs": [],
+  "outputs": [
+    { "name": "IsKinetic", "color": "#FFAA00", "expression": "create_kinetic(\"front\")" },
+    { "name": "Speed",     "color": "#FF6600", "expression": "create_speed(\"front\")" },
+    { "name": "Stress",    "color": "#FF3333", "expression": "create_stress(\"front\")" },
+    { "name": "Capacity",  "color": "#33FF88", "expression": "create_capacity(\"front\")" }
+  ]
+}

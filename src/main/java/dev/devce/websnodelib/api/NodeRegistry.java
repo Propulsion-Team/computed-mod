@@ -12,6 +12,14 @@ public class NodeRegistry {
         REGISTRY.put(id, factory);
     }
 
+    public static boolean isRegistered(ResourceLocation id) {
+        return REGISTRY.containsKey(id);
+    }
+
+    public static void unregister(ResourceLocation id) {
+        REGISTRY.remove(id);
+    }
+
     public static WNode createNode(ResourceLocation id, int x, int y) {
         NodeFactory factory = REGISTRY.get(id);
         if (factory != null) {

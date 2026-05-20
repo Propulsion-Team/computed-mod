@@ -1,0 +1,12 @@
+{
+  "id": "computed:example_fluid_check",
+  "label": "Fluid Checker",
+  "menuPath": ["Custom", "Examples"],
+  "inputs": [],
+  "outputs": [
+    { "name": "Present", "color": "#5599FF", "expression": "fluid_present(\"front\")" },
+    { "name": "Level",   "color": "#55CCFF", "expression": "fluid_level(\"front\")" },
+    { "name": "Type",    "type": "string", "color": "#FFC830",
+      "expression": "fluid_type(\"front\")" }
+  ]
+}

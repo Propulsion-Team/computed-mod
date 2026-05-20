@@ -1,0 +1,14 @@
+{
+  "id": "computed:example_counter",
+  "label": "Tick Counter",
+  "menuPath": ["Custom", "Examples"],
+  "inputs": [
+    { "name": "Reset", "color": "#FF5555" }
+  ],
+  "outputs": [
+    { "name": "Count", "color": "#00FF88", "expression": "count" }
+  ],
+  "state": [
+    { "name": "count", "init": 0, "update": "if(Reset > 0.5, 0, count + 1)" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "computed:example_env_sensor",
+  "label": "Environment Sensor",
+  "menuPath": ["Custom", "Examples"],
+  "inputs": [],
+  "outputs": [
+    { "name": "Light",     "color": "#FFFF55", "expression": "light_level()" },
+    { "name": "Raining",   "color": "#5599FF", "expression": "is_raining()" },
+    { "name": "Thundering","color": "#9955FF", "expression": "is_thundering()" },
+    { "name": "IsDay",     "color": "#FFAA00", "expression": "is_day()" },
+    { "name": "Biome",     "type": "string", "color": "#55FF55",
+      "expression": "biome_name()" }
+  ]
+}

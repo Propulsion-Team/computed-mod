@@ -32,6 +32,15 @@ public enum RelativeFace {
         };
     }
 
+    /** Parse from a case-insensitive string; returns {@code null} if unrecognised. */
+    public static RelativeFace byName(String name) {
+        if (name == null) return null;
+        for (RelativeFace f : values()) {
+            if (f.name().equalsIgnoreCase(name) || f.displayName.equalsIgnoreCase(name)) return f;
+        }
+        return null;
+    }
+
     /** Best-effort migration from old world-absolute {@link Direction} dropdown values. */
     public static RelativeFace fromLegacyDirection(Direction d) {
         return switch (d) {

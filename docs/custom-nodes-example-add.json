@@ -1,0 +1,15 @@
+{
+  "id": "computed:example_add",
+  "label": "Example Add",
+  "menuPath": ["Custom", "Examples"],
+  "inputs": [
+    { "name": "A", "color": "#00FF88" },
+    { "name": "B", "color": "#00FF88" }
+  ],
+  "outputs": [
+    { "name": "Result", "color": "#FF5555", "expression": "A + B" }
+  ],
+  "constants": {
+    "bias": 0.0
+  }
+}

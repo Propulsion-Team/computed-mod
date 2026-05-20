@@ -20,6 +20,10 @@ import dev.propulsionteam.computed.content.nodes.widgets.ProgressBarWidgetNode;
 import dev.propulsionteam.computed.content.nodes.widgets.SliderWidgetNode;
 import dev.propulsionteam.computed.content.nodes.widgets.TextSourceNode;
 import dev.propulsionteam.computed.content.nodes.widgets.TextWidgetNode;
+import dev.propulsionteam.computed.customnodes.ComputedCustomNodes;
+import dev.propulsionteam.computed.customnodes.expr.FunctionRegistry;
+import dev.propulsionteam.computed.customnodes.sources.CreateSources;
+import dev.propulsionteam.computed.customnodes.sources.WorldSources;
 
 public final class ComputedNodes {
 
@@ -27,6 +31,9 @@ public final class ComputedNodes {
 
     public static void register() {
         ComputedMenuCategories.registerAll();
+
+        // Register Java-backed source functions for data-driven nodes
+        WorldSources.register(FunctionRegistry.get());
 
         // vanilla
         RedstonePortNode.register();
@@ -61,9 +68,12 @@ public final class ComputedNodes {
             ComputedMenuCategories.registerCreateCategories();
             CreateRedstoneLinkSenderNode.register();
             CreateRedstoneLinkReceiverNode.register();
+            CreateSources.register(FunctionRegistry.get());
         } else {
             CreateRedstoneLinkSenderNode.registerType();
             CreateRedstoneLinkReceiverNode.registerType();
         }
+
+        ComputedCustomNodes.reload();
     }
 }

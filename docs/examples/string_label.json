@@ -1,0 +1,13 @@
+{
+  "id": "computed:example_string_label",
+  "label": "Sensor Label",
+  "menuPath": ["Custom", "Examples"],
+  "inputs": [
+    { "name": "Value", "type": "number", "color": "#00FF88" },
+    { "name": "Unit",  "type": "string", "color": "#FFC830" }
+  ],
+  "outputs": [
+    { "name": "Label", "type": "string", "color": "#FFC830",
+      "expression": "concat(str(round(Value)), \" \", Unit)" }
+  ]
+}
