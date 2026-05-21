@@ -4,6 +4,7 @@ import dev.devce.websnodelib.api.FunctionCardNode;
 import dev.devce.websnodelib.api.WGraph;
 import dev.devce.websnodelib.api.WNode;
 import dev.propulsionteam.computed.ComputerEditorBridge;
+import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
 import dev.propulsionteam.computed.customnodes.ComputedCustomNodes;
 import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
@@ -26,7 +27,7 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import java.util.UUID;
 
 public final class ComputedNetworking {
-    private static final double MAX_EDIT_DISTANCE_SQ = 8.0 * 8.0;
+    private static final double MAX_EDIT_DISTANCE_SQ = 16.0 * 16.0;
     /** Pixels per monitor block; widget x/y/w/h are in this coordinate system. */
     public static final int SCREEN_PX_PER_BLOCK = 64;
     /** Monitor model/texture pixels reserved by the bezel on each outer screen edge. */
@@ -90,11 +91,22 @@ public final class ComputedNetworking {
             }
             BlockPos pos = payload.pos();
             if (player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_EDIT_DISTANCE_SQ) {
+                Computed.LOGGER.debug(
+                        "Rejected graph save from {} at {} (distance {:.2f} > {:.2f})",
+                        player.getGameProfile().getName(),
+                        pos,
+                        Math.sqrt(player.distanceToSqr(Vec3.atCenterOf(pos))),
+                        Math.sqrt(MAX_EDIT_DISTANCE_SQ));
                 return;
             }
             BlockEntity be = player.level().getBlockEntity(pos);
             if (be instanceof ComputerBlockEntity computer) {
                 computer.applyGraphFromNetwork(payload.graphTag());
+            } else {
+                Computed.LOGGER.debug(
+                        "Rejected graph save from {} at {} (no ComputerBlockEntity)",
+                        player.getGameProfile().getName(),
+                        pos);
             }
         });
     }
