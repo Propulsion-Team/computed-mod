@@ -13,6 +13,9 @@ import java.util.UUID;
  * A node can have inputs, outputs, UI elements, and a custom evaluation logic.
  */
 public class WNode {
+    private static final int PIN_SIZE = 5;
+    private static final int PIN_HOVER_SIZE = 7;
+
     private UUID id;
     private final ResourceLocation typeId;
     private String title;
@@ -224,14 +227,17 @@ public class WNode {
      */
     private void renderPin(GuiGraphics graphics, int px, int py, WPin pin, boolean isInput, int mouseX, int mouseY) {
         int color = pin.getColor();
-        boolean hover = mouseX >= px && mouseX <= px + 5 && mouseY >= py && mouseY <= py + 5;
-        
+        boolean hover = mouseX >= px - 1 && mouseX <= px + PIN_SIZE && mouseY >= py - 1 && mouseY <= py + PIN_SIZE;
+        int size = hover ? PIN_HOVER_SIZE : PIN_SIZE;
+        int left = px - (size - PIN_SIZE) / 2;
+        int top = py - (size - PIN_SIZE) / 2;
+
         if (hover) {
-            graphics.fill(px - 1, py - 1, px + 6, py + 6, 0x33FFFFFF);
+            graphics.fill(left - 1, top - 1, left + size + 1, top + size + 1, 0x33FFFFFF);
         }
-        
-        graphics.fill(px, py, px + 5, py + 5, pin.isConnected() ? color : (color & 0x44FFFFFF));
-        graphics.renderOutline(px, py, 5, 5, hover ? 0xFFFFFFFF : (color | 0xFF000000));
+
+        graphics.fill(left, top, left + size, top + size, pin.isConnected() ? color : (color & 0x44FFFFFF));
+        graphics.renderOutline(left, top, size, size, hover ? 0xFFFFFFFF : (color | 0xFF000000));
 
         // Pin Label
         String name = pin.getName();
@@ -252,7 +258,7 @@ public class WNode {
         for (int i = 0; i < list.size(); i++) {
             int rx = startX;
             int ry = 18 + i * 12;
-            if (px >= rx && px <= rx + 5 && py >= ry && py <= ry + 5) {
+            if (px >= rx - 1 && px <= rx + PIN_SIZE && py >= ry - 1 && py <= ry + PIN_SIZE) {
                 return i;
             }
         }
