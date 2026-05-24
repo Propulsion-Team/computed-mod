@@ -3,9 +3,6 @@ package dev.devce.websnodelib.api.elements;
 import dev.devce.websnodelib.api.WElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
-import net.minecraft.network.chat.Component;
-import net.minecraft.sounds.SoundEvents;
 
 public class WButton extends WElement {
     private String label;
@@ -34,10 +31,6 @@ public class WButton extends WElement {
     @Override
     public boolean handleMouseClick(double mouseX, double mouseY, int button) {
         if (button == 0 && mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc != null) {
-                mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), 1.0f));
-            }
             if (onClick != null) onClick.run();
             return true;
         }

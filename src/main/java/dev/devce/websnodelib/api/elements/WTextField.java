@@ -3,8 +3,6 @@ package dev.devce.websnodelib.api.elements;
 import dev.devce.websnodelib.api.WElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
-import net.minecraft.sounds.SoundEvents;
 import net.neoforged.fml.loading.FMLEnvironment;
 import org.lwjgl.glfw.GLFW;
 
@@ -279,10 +277,6 @@ public class WTextField extends WElement {
     }
 
     private static void playTypingSound(float pitch) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc == null) {
-            return;
-        }
-        mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), pitch));
+        // No-op in shared code: keep text field server-loadable during graph deserialization.
     }
 }

@@ -3,9 +3,7 @@ package dev.devce.websnodelib.api.elements;
 import dev.devce.websnodelib.api.WElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
 
@@ -212,9 +210,6 @@ public class WSlider extends WElement {
     }
 
     private static void playClick(float pitch) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc != null) {
-            mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), pitch));
-        }
+        // No-op in shared code: keep slider server-loadable during graph deserialization.
     }
 }

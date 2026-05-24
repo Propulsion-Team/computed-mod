@@ -3,11 +3,9 @@ package dev.devce.websnodelib.api.elements;
 import dev.devce.websnodelib.api.WElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.ItemStack;
 
 /**
@@ -55,9 +53,6 @@ public class WItemPickSlot extends WElement {
         Minecraft mc = Minecraft.getInstance();
         int slotY = mc.font.lineHeight - 2;
         if (mouseX >= 0 && mouseX < 18 && mouseY >= slotY && mouseY < slotY + 18) {
-            if (mc.getSoundManager() != null) {
-                mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), 1.02f));
-            }
             dev.devce.websnodelib.client.ui.WNodeScreen.requestItemPick(this::setStack);
             return true;
         }

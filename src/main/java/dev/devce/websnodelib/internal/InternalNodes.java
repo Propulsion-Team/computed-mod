@@ -62,9 +62,8 @@ import dev.devce.websnodelib.internal.nodes.sources.OscillatorNode;
 import dev.devce.websnodelib.internal.nodes.sources.PulseNode;
 import dev.devce.websnodelib.internal.nodes.sources.SampleHoldNode;
 import dev.devce.websnodelib.internal.nodes.sources.TickNode;
-import dev.devce.websnodelib.internal.nodes.visuals.RgbPreviewNode;
-import dev.devce.websnodelib.internal.nodes.visuals.Viewport3DNode;
 import net.minecraft.network.chat.Component;
+import net.neoforged.fml.loading.FMLEnvironment;
 
 /** https://github.com/webyep-art/webs_node_lib (MIT, webyep). */
 public final class InternalNodes {
@@ -114,9 +113,8 @@ public final class InternalNodes {
         // i/o
         DisplayNode.register();
 
-        // visuals
-        Viewport3DNode.register();
-        RgbPreviewNode.register();
+        // visuals (client-only editor nodes; keep out of dedicated-server registry)
+        registerClientVisualNodes();
 
         // organization (tool_section is editor-only — menu entry without NodeRegistry)
         NodeMenuRegistry.addNodeEntry(
@@ -172,5 +170,22 @@ public final class InternalNodes {
         FunctionStartNode.register();
         FunctionEndNode.register();
         FunctionCardNode.register();
+    }
+
+    private static void registerClientVisualNodes() {
+        if (FMLEnvironment.dist.isDedicatedServer()) {
+            return;
+        }
+        registerNodeClass("dev.devce.websnodelib.internal.nodes.visuals.Viewport3DNode");
+        registerNodeClass("dev.devce.websnodelib.internal.nodes.visuals.RgbPreviewNode");
+    }
+
+    private static void registerNodeClass(String className) {
+        try {
+            Class<?> nodeClass = Class.forName(className);
+            nodeClass.getMethod("register").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Failed to register node class: " + className, e);
+        }
     }
 }

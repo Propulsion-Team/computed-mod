@@ -3,11 +3,9 @@ package dev.devce.websnodelib.api.elements;
 import dev.devce.websnodelib.api.WElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.ItemStack;
 
 /**
@@ -96,9 +94,7 @@ public class WFrequencySlotPair extends WElement {
     }
 
     private static void playClick(Minecraft mc) {
-        if (mc != null && mc.getSoundManager() != null) {
-            mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), 1.02f));
-        }
+        // No-op in shared code: keep item slot pair server-loadable during graph deserialization.
     }
 
     private void setRed(ItemStack st) {

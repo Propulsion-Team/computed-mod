@@ -6,8 +6,6 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
-import net.minecraft.sounds.SoundEvents;
 
 /**
  * Minimal dropdown / combobox. Closed: shows the currently selected option with a ▼ glyph; clicking
@@ -112,9 +110,6 @@ public class WDropdown<T> extends WElement {
     }
 
     private static void playClick() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc != null) {
-            mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), 1.0f));
-        }
+        // No-op in shared code: keep dropdown server-loadable during graph deserialization.
     }
 }
