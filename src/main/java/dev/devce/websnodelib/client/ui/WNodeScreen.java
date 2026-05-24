@@ -11,6 +11,7 @@ import dev.devce.websnodelib.api.NodeRegistry;
 import dev.devce.websnodelib.api.WGraph;
 import dev.devce.websnodelib.api.WNode;
 import dev.devce.websnodelib.api.WConnection;
+import dev.propulsionteam.computed.client.ComputedGraphShareCodec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -69,6 +70,8 @@ public class WNodeScreen extends Screen {
     private final boolean editorFullscreen = true;
     private static final int FULLSCREEN_BTN = 22;
     private static final int FULLSCREEN_BTN_PAD = 6;
+    private static final int CENTER_BTN_W = 96;
+    private static final int CENTER_BTN_H = 22;
     private static final int ICON_SIZE = 16;
     private static final ResourceLocation ICON_DUPLICATE =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/duplicate.png");
@@ -98,6 +101,8 @@ public class WNodeScreen extends Screen {
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/folder_multicolor.png");
     private static final ResourceLocation ICON_UPLOAD =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/upload_multicolor.png");
+    private static final ResourceLocation ICON_EXPORT =
+            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/export.png");
     private static final ResourceLocation ICON_SCROLLER_MULTICOLOR =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/scroller_multicolor.png");
     private static final ResourceLocation ICON_SCROLLER_DISABLED =
@@ -150,6 +155,12 @@ public class WNodeScreen extends Screen {
     /** Naming overlay after "+ New function" (computer editor only). */
     private boolean newFunctionNamingOpen;
     private String newFunctionNameBuffer = "";
+    private boolean exportDialogOpen;
+    private String exportDialogText = "";
+    private boolean importDialogOpen;
+    private String importDialogText = "";
+    private String importDialogStatus = "";
+    private boolean importDialogStatusError;
 
     private record FunctionEditFrame(WGraph parentGraph, FunctionCardNode openedHost) {}
 
@@ -164,6 +175,13 @@ public class WNodeScreen extends Screen {
     // Viewport panning and zoom
     private double panX = 0;
     private double panY = 0;
+    private boolean cameraFocusActive = false;
+    private double cameraFocusStartPanX = 0;
+    private double cameraFocusStartPanY = 0;
+    private double cameraFocusTargetPanX = 0;
+    private double cameraFocusTargetPanY = 0;
+    private double cameraFocusElapsedSec = 0;
+    private double cameraFocusDurationSec = 0.35;
     private boolean isPanning = false;
     private float zoom = 1.0f;
 
@@ -298,7 +316,7 @@ public class WNodeScreen extends Screen {
 
     // Animation and Effects
     private float screenAnimation = 0.0f;
-    private long lastFrameTime = 0;
+    private long lastFrameTimeNs = 0;
     /** False after the first {@link #init()} so window resize does not reset undo / replay open animation. */
     private boolean editorFirstInit = true;
     /** Wall-clock scroll for wire pulses; smooth at any tick rate (not tied to {@link WGraph#getSimulationStepCounter()}). */
@@ -702,6 +720,62 @@ public class WNodeScreen extends Screen {
         return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
     }
 
+    private int centerViewBtnX() {
+        return width / 2 - CENTER_BTN_W / 2;
+    }
+
+    private int centerViewBtnY() {
+        return viewInset() + FULLSCREEN_BTN_PAD;
+    }
+
+    private boolean centerViewBtnContains(double mx, double my) {
+        int x = centerViewBtnX();
+        int y = centerViewBtnY();
+        return mx >= x && mx < x + CENTER_BTN_W && my >= y && my < y + CENTER_BTN_H;
+    }
+
+    private void requestCameraCenterOnNodes() {
+        if (graph.getNodes().isEmpty()) {
+            playUiClick(0.82f);
+            return;
+        }
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        boolean any = false;
+        for (WNode n : graph.getNodes()) {
+            // In nested function graphs, boundary helper nodes are often not useful anchors.
+            if (n instanceof FunctionStartNode || n instanceof FunctionEndNode) {
+                continue;
+            }
+            any = true;
+            minX = Math.min(minX, n.getX());
+            minY = Math.min(minY, n.getY());
+            maxX = Math.max(maxX, n.getX() + n.getWidth());
+            maxY = Math.max(maxY, n.getY() + n.getHeight());
+        }
+        if (!any) {
+            for (WNode n : graph.getNodes()) {
+                minX = Math.min(minX, n.getX());
+                minY = Math.min(minY, n.getY());
+                maxX = Math.max(maxX, n.getX() + n.getWidth());
+                maxY = Math.max(maxY, n.getY() + n.getHeight());
+            }
+        }
+        int cx = (minX + maxX) / 2;
+        int cy = (minY + maxY) / 2;
+        cameraFocusStartPanX = panX;
+        cameraFocusStartPanY = panY;
+        cameraFocusTargetPanX = width / 2.0 - cx;
+        cameraFocusTargetPanY = height / 2.0 - cy;
+        double dist = Math.hypot(cameraFocusTargetPanX - cameraFocusStartPanX, cameraFocusTargetPanY - cameraFocusStartPanY);
+        cameraFocusDurationSec = Mth.clamp(dist / 1200.0, 0.22, 0.60);
+        cameraFocusElapsedSec = 0.0;
+        cameraFocusActive = true;
+        playUiClick(1.02f);
+    }
+
     private int sectionsSidebarW() {
         return 180;
     }
@@ -747,7 +821,7 @@ public class WNodeScreen extends Screen {
     }
 
     private int sectionsToggleX() {
-        return fullscreenBtnX() - FULLSCREEN_BTN - 4;
+        return width - viewInset() - FULLSCREEN_BTN_PAD - FULLSCREEN_BTN;
     }
 
     private int sectionsToggleY() {
@@ -1772,9 +1846,20 @@ public class WNodeScreen extends Screen {
     }
 
     private void renderInner(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        long now = net.minecraft.Util.getMillis();
-        float deltaTime = (lastFrameTime == 0) ? 0.016f : (now - lastFrameTime) / 1000f;
-        lastFrameTime = now;
+        long nowNs = System.nanoTime();
+        float deltaTime = (lastFrameTimeNs == 0) ? 0.016f : (float) ((nowNs - lastFrameTimeNs) / 1_000_000_000.0);
+        lastFrameTimeNs = nowNs;
+        if (cameraFocusActive) {
+            cameraFocusElapsedSec += deltaTime;
+            double t = cameraFocusDurationSec <= 0.0 ? 1.0 : Mth.clamp(cameraFocusElapsedSec / cameraFocusDurationSec, 0.0, 1.0);
+            // Time-parametric easing avoids frame-quantized feel.
+            double e = 1.0 - Math.pow(1.0 - t, 3.0);
+            panX = Mth.lerp(e, cameraFocusStartPanX, cameraFocusTargetPanX);
+            panY = Mth.lerp(e, cameraFocusStartPanY, cameraFocusTargetPanY);
+            if (t >= 1.0) {
+                cameraFocusActive = false;
+            }
+        }
         wirePulseScroll += deltaTime * PULSE_SCROLL_SPEED;
         if (wirePulseScroll > 8192f) {
             wirePulseScroll -= 8192f;
@@ -1936,8 +2021,10 @@ public class WNodeScreen extends Screen {
 
         renderNodeActionDock(graphics, mouseX, mouseY, ease);
 
+        renderCenterViewButton(graphics, mouseX, mouseY, ease);
         renderSectionsSidebar(graphics, mouseX, mouseY, ease);
         renderSchematicToolbar(graphics, mouseX, mouseY, ease);
+        renderShareToolbar(graphics, mouseX, mouseY, ease);
 
         if (isSearching) {
             rebuildSearchHitRows();
@@ -1956,6 +2043,11 @@ public class WNodeScreen extends Screen {
         graphics.pose().popPose();
 
         renderItemPickerOverlay(graphics);
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 9000);
+        renderExportDialog(graphics);
+        renderImportFromStringDialog(graphics);
+        graphics.pose().popPose();
 
         if (newFunctionNamingOpen) {
             graphics.pose().pushPose();
@@ -2024,6 +2116,19 @@ public class WNodeScreen extends Screen {
         }
     }
 
+    private void renderCenterViewButton(GuiGraphics graphics, int mx, int my, float ease) {
+        int x = centerViewBtnX();
+        int y = centerViewBtnY();
+        boolean hov = centerViewBtnContains(mx, my);
+        int fill = hov ? 0x3A3A3A : 0x2A2A2A;
+        graphics.fill(x, y, x + CENTER_BTN_W, y + CENTER_BTN_H, ((int) (200 * ease) << 24) | fill);
+        graphics.renderOutline(x, y, CENTER_BTN_W, CENTER_BTN_H, ((int) (255 * ease) << 24) | 0x777777);
+        String label = "Center View";
+        int tx = x + (CENTER_BTN_W - font.width(label)) / 2;
+        int ty = y + (CENTER_BTN_H - font.lineHeight) / 2 + 1;
+        graphics.drawString(font, label, tx, ty, 0xFFE8F0FF, false);
+    }
+
     private int schematicBtnX() {
         return viewInset() + FULLSCREEN_BTN_PAD;
     }
@@ -2039,6 +2144,98 @@ public class WNodeScreen extends Screen {
         int x = schematicBtnX();
         int y = schematicBtnY();
         return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
+    }
+
+    private int shareExportBtnX() {
+        return schematicBtnX() + FULLSCREEN_BTN + 4;
+    }
+
+    private int shareExportBtnY() {
+        return schematicBtnY();
+    }
+
+    private int shareImportBtnX() {
+        return shareExportBtnX() + FULLSCREEN_BTN + 4;
+    }
+
+    private int shareImportBtnY() {
+        return schematicBtnY();
+    }
+
+    private boolean shareExportBtnContains(double mx, double my) {
+        int x = shareExportBtnX();
+        int y = shareExportBtnY();
+        return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
+    }
+
+    private boolean shareImportBtnContains(double mx, double my) {
+        int x = shareImportBtnX();
+        int y = shareImportBtnY();
+        return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
+    }
+
+    private void postShareStatus(boolean error, String key, Object... args) {
+        importDialogStatusError = error;
+        importDialogStatus = Component.translatable(key, args).getString();
+        if (minecraft.player != null) {
+            minecraft.player.displayClientMessage(Component.translatable(key, args), true);
+        }
+    }
+
+    private void openExportDialog() {
+        try {
+            if (functionStore != null) {
+                functionStore.syncBodiesFromGraph(graph);
+            }
+            String out = ComputedGraphShareCodec.encode(graph, functionStore);
+            exportDialogText = out;
+            exportDialogOpen = true;
+            importDialogOpen = false;
+            postShareStatus(false, "gui.computed.share.export_ready", out.length());
+            playUiClick(1.05f);
+        } catch (Exception e) {
+            postShareStatus(true, "gui.computed.share.export_failed");
+            playUiClick(0.82f);
+        }
+    }
+
+    private void openImportFromStringDialog() {
+        importDialogOpen = true;
+        exportDialogOpen = false;
+        importDialogText = "";
+        importDialogStatus = "";
+        importDialogStatusError = false;
+    }
+
+    private void closeImportFromStringDialog() {
+        importDialogOpen = false;
+    }
+
+    private void closeExportDialog() {
+        exportDialogOpen = false;
+    }
+
+    private void importGraphFromShareString(String input) {
+        try {
+            ComputedGraphShareCodec.Decoded decoded = ComputedGraphShareCodec.decode(input);
+            recordCheckpointBeforeEdit();
+            graph.load(decoded.graph());
+            if (functionStore != null) {
+                functionStore.load(decoded.functions());
+                FunctionCardNode.applyLibraryToInnerGraphs(graph, functionStore);
+            }
+            postShareStatus(
+                    false,
+                    decoded.legacy()
+                            ? "gui.computed.share.import_success_legacy"
+                            : "gui.computed.share.import_success",
+                    decoded.embeddedCustomNodeCount());
+            closeImportFromStringDialog();
+            playUiClick(1.07f);
+        } catch (Exception e) {
+            postShareStatus(true, "gui.computed.share.import_failed");
+            playUiClick(0.82f);
+        }
     }
 
     private int schematicPickerW() {
@@ -2442,6 +2639,136 @@ public class WNodeScreen extends Screen {
 
         if (nestedFunctionDiskToolbarVisible()) {
             renderNestedFunctionDiskToolbar(graphics, mx, my, ease);
+        }
+    }
+
+    private void renderShareToolbar(GuiGraphics graphics, int mx, int my, float ease) {
+        int alphaBg = (int) (200 * ease);
+        int ex = shareExportBtnX();
+        int ey = shareExportBtnY();
+        int ix = shareImportBtnX();
+        int iy = shareImportBtnY();
+        boolean hExport = shareExportBtnContains(mx, my);
+        boolean hImport = shareImportBtnContains(mx, my);
+        graphics.fill(ex, ey, ex + FULLSCREEN_BTN, ey + FULLSCREEN_BTN, (alphaBg << 24) | (hExport ? 0x3a3a3a : 0x2a2a2a));
+        graphics.renderOutline(ex, ey, FULLSCREEN_BTN, FULLSCREEN_BTN, ((int) (255 * ease) << 24) | 0x777777);
+        graphics.fill(ix, iy, ix + FULLSCREEN_BTN, iy + FULLSCREEN_BTN, (alphaBg << 24) | (hImport ? 0x3a3a3a : 0x2a2a2a));
+        graphics.renderOutline(ix, iy, FULLSCREEN_BTN, FULLSCREEN_BTN, ((int) (255 * ease) << 24) | 0x777777);
+        int exi = ex + (FULLSCREEN_BTN - ICON_SIZE) / 2;
+        int eyi = ey + (FULLSCREEN_BTN - ICON_SIZE) / 2;
+        int ixi = ix + (FULLSCREEN_BTN - ICON_SIZE) / 2;
+        int iyi = iy + (FULLSCREEN_BTN - ICON_SIZE) / 2;
+        graphics.blit(ICON_EXPORT, exi, eyi, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+        graphics.blit(ICON_UPLOAD, ixi, iyi, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+    }
+
+    private void renderImportFromStringDialog(GuiGraphics graphics) {
+        if (!importDialogOpen) {
+            return;
+        }
+        graphics.fill(0, 0, width, height, 0x88000000);
+        int boxW = Math.min(540, width - 40);
+        int boxH = Math.min(220, height - 40);
+        int bx = width / 2 - boxW / 2;
+        int by = height / 2 - boxH / 2;
+        drawMenuPanel(graphics, bx, by, boxW, boxH);
+        graphics.drawString(font, Component.translatable("gui.computed.share.import_title"), bx + 8, by + 8, 0xFFEAF0FF, false);
+        int tx1 = bx + 8;
+        int ty1 = by + 24;
+        int tx2 = bx + boxW - 8;
+        int ty2 = by + boxH - 44;
+        graphics.fill(tx1, ty1, tx2, ty2, 0xFF000000);
+        graphics.renderOutline(tx1, ty1, tx2 - tx1, ty2 - ty1, 0xFF5A6A5A);
+        String display = importDialogText.isEmpty() ? Component.translatable("gui.computed.share.import_placeholder").getString() : importDialogText;
+        int color = importDialogText.isEmpty() ? 0xFF667766 : 0xFFE8F0E8;
+        graphics.enableScissor(tx1 + 2, ty1 + 2, tx2 - 2, ty2 - 2);
+        int maxW = tx2 - tx1 - 8;
+        List<net.minecraft.util.FormattedCharSequence> lines = font.split(Component.literal(display), maxW);
+        int y = ty1 + 4;
+        int start = Math.max(0, lines.size() - Math.max(1, (ty2 - ty1 - 8) / font.lineHeight));
+        for (int i = start; i < lines.size(); i++) {
+            graphics.drawString(font, lines.get(i), tx1 + 4, y, color, false);
+            y += font.lineHeight;
+            if (y > ty2 - font.lineHeight) {
+                break;
+            }
+        }
+        graphics.disableScissor();
+
+        int btnW = 88;
+        int btnH = 20;
+        int importX = bx + boxW - btnW * 2 - 16;
+        int cancelX = bx + boxW - btnW - 8;
+        int btnY = by + boxH - 30;
+        graphics.fill(importX, btnY, importX + btnW, btnY + btnH, 0xFF2A4A3A);
+        graphics.renderOutline(importX, btnY, btnW, btnH, 0xFF77AA88);
+        graphics.drawString(font, Component.translatable("gui.computed.share.import_button"), importX + 16, btnY + 6, 0xFFFFFFFF, false);
+        graphics.fill(cancelX, btnY, cancelX + btnW, btnY + btnH, 0xFF3A2A2A);
+        graphics.renderOutline(cancelX, btnY, btnW, btnH, 0xFFAA7777);
+        graphics.drawString(font, Component.translatable("gui.computed.share.cancel_button"), cancelX + 18, btnY + 6, 0xFFFFFFFF, false);
+
+        if (!importDialogStatus.isEmpty()) {
+            graphics.drawString(
+                    font,
+                    importDialogStatus,
+                    bx + 8,
+                    by + boxH - 28,
+                    importDialogStatusError ? 0xFFFF8888 : 0xFF88CC88,
+                    false);
+        }
+    }
+
+    private void renderExportDialog(GuiGraphics graphics) {
+        if (!exportDialogOpen) {
+            return;
+        }
+        graphics.fill(0, 0, width, height, 0x88000000);
+        int boxW = Math.min(540, width - 40);
+        int boxH = Math.min(220, height - 40);
+        int bx = width / 2 - boxW / 2;
+        int by = height / 2 - boxH / 2;
+        drawMenuPanel(graphics, bx, by, boxW, boxH);
+        graphics.drawString(font, Component.translatable("gui.computed.share.export_title"), bx + 8, by + 8, 0xFFEAF0FF, false);
+        int tx1 = bx + 8;
+        int ty1 = by + 24;
+        int tx2 = bx + boxW - 8;
+        int ty2 = by + boxH - 44;
+        graphics.fill(tx1, ty1, tx2, ty2, 0xFF000000);
+        graphics.renderOutline(tx1, ty1, tx2 - tx1, ty2 - ty1, 0xFF5A6A5A);
+        graphics.enableScissor(tx1 + 2, ty1 + 2, tx2 - 2, ty2 - 2);
+        int maxW = tx2 - tx1 - 8;
+        List<net.minecraft.util.FormattedCharSequence> lines = font.split(Component.literal(exportDialogText), maxW);
+        int y = ty1 + 4;
+        int start = Math.max(0, lines.size() - Math.max(1, (ty2 - ty1 - 8) / font.lineHeight));
+        for (int i = start; i < lines.size(); i++) {
+            graphics.drawString(font, lines.get(i), tx1 + 4, y, 0xFFE8F0E8, false);
+            y += font.lineHeight;
+            if (y > ty2 - font.lineHeight) {
+                break;
+            }
+        }
+        graphics.disableScissor();
+
+        int btnW = 88;
+        int btnH = 20;
+        int copyX = bx + boxW - btnW * 2 - 16;
+        int closeX = bx + boxW - btnW - 8;
+        int btnY = by + boxH - 30;
+        graphics.fill(copyX, btnY, copyX + btnW, btnY + btnH, 0xFF2A4A3A);
+        graphics.renderOutline(copyX, btnY, btnW, btnH, 0xFF77AA88);
+        graphics.drawString(font, Component.translatable("gui.computed.share.copy_button"), copyX + 24, btnY + 6, 0xFFFFFFFF, false);
+        graphics.fill(closeX, btnY, closeX + btnW, btnY + btnH, 0xFF3A2A2A);
+        graphics.renderOutline(closeX, btnY, btnW, btnH, 0xFFAA7777);
+        graphics.drawString(font, Component.translatable("gui.computed.share.close_button"), closeX + 22, btnY + 6, 0xFFFFFFFF, false);
+
+        if (!importDialogStatus.isEmpty()) {
+            graphics.drawString(
+                    font,
+                    importDialogStatus,
+                    bx + 8,
+                    by + boxH - 28,
+                    importDialogStatusError ? 0xFFFF8888 : 0xFF88CC88,
+                    false);
         }
     }
 
@@ -3897,6 +4224,67 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (exportDialogOpen) {
+            if (button != 0) {
+                return true;
+            }
+            int boxW = Math.min(540, width - 40);
+            int boxH = Math.min(220, height - 40);
+            int bx = width / 2 - boxW / 2;
+            int by = height / 2 - boxH / 2;
+            int btnW = 88;
+            int btnH = 20;
+            int copyX = bx + boxW - btnW * 2 - 16;
+            int closeX = bx + boxW - btnW - 8;
+            int btnY = by + boxH - 30;
+            if (mouseX >= copyX && mouseX < copyX + btnW && mouseY >= btnY && mouseY < btnY + btnH) {
+                minecraft.keyboardHandler.setClipboard(exportDialogText);
+                postShareStatus(false, "gui.computed.share.export_success", exportDialogText.length());
+                playUiClick(1.03f);
+                return true;
+            }
+            if (mouseX >= closeX && mouseX < closeX + btnW && mouseY >= btnY && mouseY < btnY + btnH) {
+                closeExportDialog();
+                playUiClick(0.94f);
+                return true;
+            }
+            closeExportDialog();
+            playUiClick(0.94f);
+            return true;
+        }
+        if (importDialogOpen) {
+            if (button != 0) {
+                return true;
+            }
+            int boxW = Math.min(540, width - 40);
+            int boxH = Math.min(220, height - 40);
+            int bx = width / 2 - boxW / 2;
+            int by = height / 2 - boxH / 2;
+            int tx1 = bx + 8;
+            int ty1 = by + 24;
+            int tx2 = bx + boxW - 8;
+            int ty2 = by + boxH - 44;
+            int btnW = 88;
+            int btnH = 20;
+            int importX = bx + boxW - btnW * 2 - 16;
+            int cancelX = bx + boxW - btnW - 8;
+            int btnY = by + boxH - 30;
+            if (mouseX >= importX && mouseX < importX + btnW && mouseY >= btnY && mouseY < btnY + btnH) {
+                importGraphFromShareString(importDialogText);
+                return true;
+            }
+            if (mouseX >= cancelX && mouseX < cancelX + btnW && mouseY >= btnY && mouseY < btnY + btnH) {
+                closeImportFromStringDialog();
+                playUiClick(0.94f);
+                return true;
+            }
+            if (mouseX >= tx1 && mouseX < tx2 && mouseY >= ty1 && mouseY < ty2) {
+                return true;
+            }
+            closeImportFromStringDialog();
+            playUiClick(0.94f);
+            return true;
+        }
         if (newFunctionNamingOpen) {
             return true;
         }
@@ -3904,6 +4292,19 @@ public class WNodeScreen extends Screen {
             return handleItemPickerClick(mouseX, mouseY, button);
         }
         if (handleNestedDiskToolbarClick(mouseX, mouseY, button)) {
+            return true;
+        }
+        if (button == 0 && centerViewBtnContains(mouseX, mouseY)) {
+            requestCameraCenterOnNodes();
+            return true;
+        }
+        if (button == 0 && shareExportBtnContains(mouseX, mouseY)) {
+            openExportDialog();
+            return true;
+        }
+        if (button == 0 && shareImportBtnContains(mouseX, mouseY)) {
+            openImportFromStringDialog();
+            playUiClick(1.01f);
             return true;
         }
         if (functionStore != null && button == 0 && schematicBtnContains(mouseX, mouseY)) {
@@ -4338,6 +4739,7 @@ public class WNodeScreen extends Screen {
             return true;
         }
         if (isPanning) {
+            cameraFocusActive = false;
             float s = editorContentScale();
             panX += dragX / s;
             panY += dragY / s;
@@ -4449,6 +4851,9 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (importDialogOpen) {
+            return true;
+        }
         if (!isInsideEditorPanel(mouseX, mouseY)) {
             return false;
         }
@@ -4457,6 +4862,9 @@ public class WNodeScreen extends Screen {
             itemPickerScroll =
                     Mth.clamp(itemPickerScroll - (int) Math.signum(scrollY), 0, maxScroll);
             return true;
+        }
+        if (scrollY != 0) {
+            cameraFocusActive = false;
         }
         if (sectionColorPickerSectionId != null) {
             return true;
@@ -4492,6 +4900,63 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (exportDialogOpen) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                closeExportDialog();
+                playUiClick(0.94f);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                minecraft.keyboardHandler.setClipboard(exportDialogText);
+                postShareStatus(false, "gui.computed.share.export_success", exportDialogText.length());
+                playUiClick(1.03f);
+                return true;
+            }
+            if (hasControlDown() && keyCode == GLFW.GLFW_KEY_C) {
+                minecraft.keyboardHandler.setClipboard(exportDialogText);
+                postShareStatus(false, "gui.computed.share.export_success", exportDialogText.length());
+                playUiClick(1.03f);
+                return true;
+            }
+            return true;
+        }
+        if (importDialogOpen) {
+            boolean ctrl = hasControlDown();
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                closeImportFromStringDialog();
+                playUiClick(0.94f);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                importGraphFromShareString(importDialogText);
+                return true;
+            }
+            if (ctrl && keyCode == GLFW.GLFW_KEY_V) {
+                String clip = minecraft.keyboardHandler.getClipboard();
+                if (clip != null && !clip.isEmpty()) {
+                    importDialogText += clip;
+                    playUiClick(1.03f);
+                }
+                return true;
+            }
+            if (ctrl && keyCode == GLFW.GLFW_KEY_C) {
+                minecraft.keyboardHandler.setClipboard(importDialogText);
+                playUiClick(1.01f);
+                return true;
+            }
+            if (ctrl && keyCode == GLFW.GLFW_KEY_A) {
+                // Keep simple text editor behavior: Ctrl+A mirrors selecting all by copying full text context.
+                minecraft.keyboardHandler.setClipboard(importDialogText);
+                playUiClick(0.98f);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !importDialogText.isEmpty()) {
+                importDialogText = importDialogText.substring(0, importDialogText.length() - 1);
+                playUiClick(0.9f);
+                return true;
+            }
+            return true;
+        }
         if (newFunctionNamingOpen && functionStore != null) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
                 cancelNewFunctionNaming();
@@ -4790,6 +5255,12 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
+        if (importDialogOpen) {
+            if (!Character.isISOControl(codePoint)) {
+                importDialogText += codePoint;
+            }
+            return true;
+        }
         if (newFunctionNamingOpen && functionStore != null) {
             if (!Character.isISOControl(codePoint) && newFunctionNameBuffer.length() < 48) {
                 newFunctionNameBuffer += codePoint;
