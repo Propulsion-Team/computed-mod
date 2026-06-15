@@ -545,8 +545,8 @@ public class WGraph {
             }
         }
         for (WConnection conn : connections) {
-            WNode source = findNode(conn.sourceNode());
-            WNode target = findNode(conn.targetNode());
+            WNode source = nodeIndex.get(conn.sourceNode());
+            WNode target = nodeIndex.get(conn.targetNode());
             if (source == null || target == null) {
                 continue;
             }
@@ -585,7 +585,7 @@ public class WGraph {
      * @return The node instance or null if not found.
      */
     private WNode findNode(UUID id) {
-        return nodes.stream().filter(n -> n.getId().equals(id)).findFirst().orElse(null);
+        return id == null ? null : nodeIndex.get(id);
     }
 
     /**
@@ -624,7 +624,7 @@ public class WGraph {
 
             for (WConnection conn : connections) {
                 if (conn.sourceNode().equals(current.getId())) {
-                    WNode target = findNode(conn.targetNode());
+                    WNode target = nodeIndex.get(conn.targetNode());
                     if (target != null && (target.getTopoDepth() == -1 || target.getTopoDepth() < nextDepth)) {
                         target.setTopoDepth(nextDepth);
                         queue.add(target);
