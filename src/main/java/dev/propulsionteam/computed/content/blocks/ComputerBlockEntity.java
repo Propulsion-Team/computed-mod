@@ -68,8 +68,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         }
         Level lvl = be.getLevel();
         if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
-            be.createRedstoneLinks.clear(lvl);
-            be.createRedstoneLinks.syncFromGraph(lvl, be, be.graph);
+            be.createRedstoneLinks.ensureSynced(lvl, be, be.graph);
         }
         ComputedGraphExecution.withHost(be, () -> be.graph.advanceSimulationInWorld(1.0 / WGraph.MAX_TICK_RATE));
         if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
@@ -210,6 +209,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         }
         FunctionCardNode.applyLibraryToInnerGraphs(graph, functionDefinitions);
         restorePinValues(graph, inputSnap, outputSnap);
+        createRedstoneLinks.markGraphDirty();
         setChanged();
     }
 
@@ -309,6 +309,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         }
         computerUuid = tag.hasUUID("ComputerUUID") ? tag.getUUID("ComputerUUID") : null;
         hydrateFunctionCardsFromLibrary();
+        createRedstoneLinks.markGraphDirty();
     }
 
     @Override

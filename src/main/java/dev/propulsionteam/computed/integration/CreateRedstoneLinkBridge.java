@@ -11,6 +11,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntSupplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -30,8 +31,20 @@ public final class CreateRedstoneLinkBridge {
     private static Boolean createPresent;
 
     private final List<Registered> registered = new ArrayList<>();
+    private boolean graphDirty = true;
 
-    private record Registered(Object proxy, boolean transmit) {}
+    private static final class Registered {
+        final Object proxy;
+        final boolean transmit;
+        final IntSupplier transmitLevel;
+        int lastStrength = Integer.MIN_VALUE;
+
+        Registered(Object proxy, boolean transmit, IntSupplier transmitLevel) {
+            this.proxy = proxy;
+            this.transmit = transmit;
+            this.transmitLevel = transmitLevel;
+        }
+    }
 
     public static boolean isCreateLoaded() {
         if (createPresent != null) {
@@ -61,8 +74,20 @@ public final class CreateRedstoneLinkBridge {
         registered.clear();
     }
 
+    public void markGraphDirty() {
+        graphDirty = true;
+    }
+
+    public void ensureSynced(Level level, ComputerBlockEntity computer, WGraph graph) {
+        if (!graphDirty) {
+            return;
+        }
+        syncFromGraph(level, computer, graph);
+    }
+
     public void syncFromGraph(Level level, ComputerBlockEntity computer, WGraph graph) {
         clear(level);
+        graphDirty = false;
         if (!isCreateLoaded() || level == null || level.isClientSide || graph == null) {
             return;
         }
@@ -109,12 +134,12 @@ public final class CreateRedstoneLinkBridge {
             return;
         }
         invokeAdd(handler, level, proxy);
-        registered.add(new Registered(proxy, true));
+        registered.add(new Registered(proxy, true, s::readTransmitStrength));
         for (BlockPos mirrorPos : sableMirrorAnchors(level, computer.getBlockPos())) {
             Object mirror = makeProxy(computer, mirrorPos, couple, true, s::readTransmitStrength, p -> {});
             if (mirror != null) {
                 invokeAdd(handler, level, mirror);
-                registered.add(new Registered(mirror, true));
+                registered.add(new Registered(mirror, true, s::readTransmitStrength));
             }
         }
     }
@@ -131,13 +156,13 @@ public final class CreateRedstoneLinkBridge {
             return;
         }
         invokeAdd(handler, level, proxy);
-        registered.add(new Registered(proxy, false));
+        registered.add(new Registered(proxy, false, null));
         warmupReceiver(handler, level, couple, proxy);
         for (BlockPos mirrorPos : sableMirrorAnchors(level, computer.getBlockPos())) {
             Object mirror = makeProxy(computer, mirrorPos, couple, false, () -> 0, r::setLinkInputStrength);
             if (mirror != null) {
                 invokeAdd(handler, level, mirror);
-                registered.add(new Registered(mirror, false));
+                registered.add(new Registered(mirror, false, null));
                 warmupReceiver(handler, level, couple, mirror);
             }
         }
@@ -217,7 +242,12 @@ public final class CreateRedstoneLinkBridge {
         try {
             Method update = handler.getClass().getMethod("updateNetworkOf", net.minecraft.world.level.LevelAccessor.class, Class.forName(IRL));
             for (Registered r : registered) {
-                if (r.transmit) {
+                if (!r.transmit || r.transmitLevel == null) {
+                    continue;
+                }
+                int strength = net.minecraft.util.Mth.clamp(r.transmitLevel.getAsInt(), 0, 15);
+                if (strength != r.lastStrength) {
+                    r.lastStrength = strength;
                     update.invoke(handler, level, r.proxy);
                 }
             }

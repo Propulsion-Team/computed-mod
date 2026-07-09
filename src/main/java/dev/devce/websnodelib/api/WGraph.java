@@ -1,6 +1,7 @@
 package dev.devce.websnodelib.api;
 
 import dev.devce.websnodelib.api.elements.WSlider;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -31,6 +32,10 @@ public class WGraph {
     private final List<WSection> sections = new ArrayList<>();
     /** UUID→node lookup; kept in sync with {@link #nodes} to avoid O(n) stream scans in hot render paths. */
     private final Map<UUID, WNode> nodeIndex = new HashMap<>();
+    private final Map<UUID, List<WConnection>> outgoingConnections = new HashMap<>();
+    private final Map<UUID, List<WConnection>> incomingConnections = new HashMap<>();
+    private final Set<UUID> forcedDirtySources = new HashSet<>();
+    private boolean forceFullWorldStep = true;
 
     /** O(1) node lookup by id. Returns null if not present. */
     public WNode getNode(UUID id) {
@@ -427,12 +432,8 @@ public class WGraph {
     }
 
     /**
-     * Block/world execution: if the graph has tick drivers, updates their outputs for this timestep, then always
-     * runs one full wire propagation and evaluation pass.
-     * <p>
-     * Unlike {@link #advanceSimulation(double)}, this does <strong>not</strong> skip evaluation when no tick
-     * pulse fired. Gating the entire graph on pulses breaks in-world redstone, function cards, and
-     * peripherals that must see fresh values every game tick.
+     * Block/world execution: source nodes are polled every game tick, then only the downstream graph section
+     * whose driver changed (or emitted an active tick/event pulse) is propagated and evaluated.
      */
     public void advanceSimulationInWorld(double deltaSeconds) {
         if (deltaSeconds <= 0) {
@@ -440,9 +441,18 @@ public class WGraph {
         }
         boolean tickPulse = true;
         if (usesTickDriver()) {
+            Map<UUID, PinSnapshot[]> tickDriverSnapshots = snapshotTickDrivers();
             tickPulse = prepareTickDrivers(deltaSeconds);
+            markChangedTickDrivers(tickDriverSnapshots);
+        } else {
+            forcedDirtySources.clear();
         }
-        stepConnectionsAndEval(tickPulse);
+        if (forceFullWorldStep) {
+            stepConnectionsAndEval(tickPulse);
+            forceFullWorldStep = false;
+        } else {
+            stepSparseConnectionsAndEval(tickPulse);
+        }
         simulationStepCounter++;
     }
 
@@ -523,6 +533,169 @@ public class WGraph {
         }
     }
 
+    private void stepSparseConnectionsAndEval(boolean tickPulseGate) {
+        evalTickPulseGate = tickPulseGate;
+        ArrayDeque<WNode> queue = new ArrayDeque<>();
+        Set<UUID> queued = new HashSet<>();
+        try {
+            for (WNode node : nodes) {
+                List<WConnection> incoming = incomingConnections.get(node.getId());
+                if (incoming != null && !incoming.isEmpty()) {
+                    continue;
+                }
+                PinSnapshot[] before = snapshotOutputs(node);
+                evaluateNode(node);
+                if (outputsChanged(node, before)
+                        || hasActivePulseOutput(node)
+                        || forcedDirtySources.contains(node.getId())) {
+                    propagateOutgoing(node, queue, queued);
+                }
+            }
+
+            int remaining = Math.max(1, nodes.size() * Math.max(1, connections.size() + 1));
+            while (!queue.isEmpty() && remaining-- > 0) {
+                WNode node = queue.removeFirst();
+                queued.remove(node.getId());
+                PinSnapshot[] before = snapshotOutputs(node);
+                evaluateNode(node);
+                if (outputsChanged(node, before) || hasActivePulseOutput(node)) {
+                    propagateOutgoing(node, queue, queued);
+                }
+            }
+        } finally {
+            evalTickPulseGate = false;
+        }
+    }
+
+    private void evaluateNode(WNode node) {
+        node.bindEvaluationGraph(this);
+        try {
+            node.evaluate();
+        } finally {
+            node.bindEvaluationGraph(null);
+        }
+    }
+
+    private Map<UUID, PinSnapshot[]> snapshotTickDrivers() {
+        Map<UUID, PinSnapshot[]> snapshots = new HashMap<>();
+        for (WNode node : nodes) {
+            if (TICK_NODE_TYPE.equals(node.getTypeId())) {
+                snapshots.put(node.getId(), snapshotOutputs(node));
+            }
+        }
+        return snapshots;
+    }
+
+    private void markChangedTickDrivers(Map<UUID, PinSnapshot[]> before) {
+        forcedDirtySources.clear();
+        for (WNode node : nodes) {
+            if (!TICK_NODE_TYPE.equals(node.getTypeId())) {
+                continue;
+            }
+            PinSnapshot[] snapshot = before.get(node.getId());
+            if (snapshot == null || outputsChanged(node, snapshot) || hasActivePulseOutput(node)) {
+                forcedDirtySources.add(node.getId());
+            }
+        }
+    }
+
+    private void propagateOutgoing(WNode source, ArrayDeque<WNode> queue, Set<UUID> queued) {
+        List<WConnection> outgoing = outgoingConnections.get(source.getId());
+        if (outgoing == null || outgoing.isEmpty()) {
+            return;
+        }
+        for (WConnection conn : outgoing) {
+            WNode target = nodeIndex.get(conn.targetNode());
+            if (target == null || !copyConnectionValue(source, target, conn)) {
+                continue;
+            }
+            if (queued.add(target.getId())) {
+                queue.addLast(target);
+            }
+        }
+    }
+
+    private boolean copyConnectionValue(WNode source, WNode target, WConnection conn) {
+        int sp = conn.sourcePin();
+        int tp = conn.targetPin();
+        if (sp < 0
+                || sp >= source.getOutputs().size()
+                || tp < 0
+                || tp >= target.getInputs().size()) {
+            return false;
+        }
+        WPin srcPin = source.getOutputs().get(sp);
+        WPin tgtPin = target.getInputs().get(tp);
+        if (srcPin.getDataType() != tgtPin.getDataType()) {
+            if (srcPin.getDataType() == WPin.DataType.NUMBER
+                    && tgtPin.getDataType() == WPin.DataType.STRING) {
+                tgtPin.setStringValue(formatNumberForString(srcPin.getValue()));
+                tgtPin.setConnected(true);
+                srcPin.setConnected(true);
+                return true;
+            }
+            return false;
+        }
+        switch (srcPin.getDataType()) {
+            case NUMBER -> tgtPin.setValue(srcPin.getValue());
+            case STRING -> tgtPin.setStringValue(srcPin.getStringValue());
+            case WIDGET -> tgtPin.setWidgetValue(srcPin.getWidgetValue());
+        }
+        tgtPin.setConnected(true);
+        srcPin.setConnected(true);
+        return true;
+    }
+
+    private static boolean hasActivePulseOutput(WNode node) {
+        for (WPin pin : node.getOutputs()) {
+            if (pin.getDataType() != WPin.DataType.NUMBER || pin.getValue() <= 0.5) {
+                continue;
+            }
+            String name = pin.getName();
+            if ("Tick".equalsIgnoreCase(name) || "Event".equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static PinSnapshot[] snapshotOutputs(WNode node) {
+        PinSnapshot[] out = new PinSnapshot[node.getOutputs().size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = PinSnapshot.capture(node.getOutputs().get(i));
+        }
+        return out;
+    }
+
+    private static boolean outputsChanged(WNode node, PinSnapshot[] before) {
+        if (before.length != node.getOutputs().size()) {
+            return true;
+        }
+        for (int i = 0; i < before.length; i++) {
+            if (!before[i].matches(node.getOutputs().get(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private record PinSnapshot(WPin.DataType type, double numberValue, String stringValue, Object widgetValue) {
+        static PinSnapshot capture(WPin pin) {
+            return new PinSnapshot(pin.getDataType(), pin.getValue(), pin.getStringValue(), pin.getWidgetValue());
+        }
+
+        boolean matches(WPin pin) {
+            if (pin.getDataType() != type) {
+                return false;
+            }
+            return switch (type) {
+                case NUMBER -> Double.compare(numberValue, pin.getValue()) == 0;
+                case STRING -> stringValue.equals(pin.getStringValue());
+                case WIDGET -> widgetValue == pin.getWidgetValue();
+            };
+        }
+    }
+
     private static String formatNumberForString(double v) {
         if (Math.abs(v - Math.rint(v)) < 1.0e-9 && Math.abs(v) < 1e15) {
             return Long.toString((long) Math.rint(v));
@@ -595,6 +768,9 @@ public class WGraph {
      * would hang this BFS).
      */
     public void updateTopology() {
+        rebuildConnectionIndexes();
+        forceFullWorldStep = true;
+
         // Reset depths
         for (WNode node : nodes) node.setTopoDepth(-1);
         
@@ -636,6 +812,24 @@ public class WGraph {
         // Handle remaining nodes (those in cycles with no external roots)
         for (WNode node : nodes) {
             if (node.getTopoDepth() == -1) node.setTopoDepth(0);
+        }
+    }
+
+    private void rebuildConnectionIndexes() {
+        outgoingConnections.clear();
+        incomingConnections.clear();
+        for (WNode node : nodes) {
+            outgoingConnections.put(node.getId(), new ArrayList<>());
+            incomingConnections.put(node.getId(), new ArrayList<>());
+        }
+        for (WConnection conn : connections) {
+            List<WConnection> out = outgoingConnections.get(conn.sourceNode());
+            List<WConnection> in = incomingConnections.get(conn.targetNode());
+            if (out == null || in == null) {
+                continue;
+            }
+            out.add(conn);
+            in.add(conn);
         }
     }
 
