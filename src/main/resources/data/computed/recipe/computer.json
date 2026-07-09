@@ -1,0 +1,29 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "RCR",
+    "IMI",
+    "IOI"
+  ],
+  "key": {
+    "R": {
+      "item": "minecraft:redstone"
+    },
+    "C": {
+      "item": "minecraft:lightning_rod"
+    },
+    "I": {
+      "item": "minecraft:copper_ingot"
+    },
+    "M": {
+      "item": "computed:monitor"
+    },
+    "O": {
+      "item": "minecraft:chiseled_copper"
+    }
+  },
+  "result": {
+    "id": "computed:computer"
+  }
+}
