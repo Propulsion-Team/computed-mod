@@ -1,16 +1,16 @@
-package dev.devce.websnodelib.internal.nodes.math.trig;
+package dev.propulsionteam.computed.internal.node.internal.nodes.math.trig;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
-import dev.devce.websnodelib.internal.nodes.math.binary.BinaryMathNode;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.BinaryMathNode;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class Atan2Node extends BinaryMathNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("math_atan2");
-    public static final ResourceLocation MENU = MenuCategories.MATH_TRIG;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("math_atan2");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.MATH_TRIG;
     public static final Component LABEL = Component.literal("Atan2");
 
     public Atan2Node(int x, int y) { super(TYPE_ID, "Atan2", x, y, Math::atan2); }

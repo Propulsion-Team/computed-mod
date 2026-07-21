@@ -2,6 +2,10 @@ package dev.propulsionteam.computed.client;
 
 import com.mojang.logging.LogUtils;
 import dev.propulsionteam.computed.Computed;
+import dev.propulsionteam.computed.internal.node.ProgramBridge;
+import dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.node.program.ProgramCodec;
 import java.awt.Desktop;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,7 +21,7 @@ import org.slf4j.Logger;
 
 /**
  * Client-only folder under {@code config/computed/functions} for exporting/importing inner function graphs as
- * {@code .nbt} files (same structure as stored {@link dev.devce.websnodelib.api.FunctionDefinitionStore} bodies).
+ * {@code .nbt} files (same structure as stored {@link dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore} bodies).
  */
 public final class ClientFunctionLibraryFiles {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -55,7 +59,11 @@ public final class ClientFunctionLibraryFiles {
         Path dir = ensureRoot();
         Path file = dir.resolve(safeBaseName(displayName) + ".nbt");
         try {
-            NbtIo.writeCompressed(innerGraphTag, file);
+            WGraph graph = new WGraph();
+            graph.load(innerGraphTag);
+            CompoundTag program = ProgramCodec.write(
+                    ProgramBridge.snapshot(graph, new FunctionDefinitionStore(), 0L));
+            NbtIo.writeCompressed(program, file);
         } catch (IOException e) {
             LOGGER.warn("Failed to save {}", file, e);
         }

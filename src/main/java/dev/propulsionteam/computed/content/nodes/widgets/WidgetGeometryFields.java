@@ -1,8 +1,8 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
 
 /**
  * Four inline numeric text fields (x, y, w, h) for a widget node, plus convenience parsing.

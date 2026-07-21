@@ -34,7 +34,7 @@ public final class ComputerEditorViewState {
     private static final String PAN_Y = "panY";
     /** View slot; {@link #ROOT_CTX} for the main graph, else function UUID string (must match UI constant). */
     private static final String CTX = "ctx";
-    /** Same string as {@link dev.devce.websnodelib.client.ui.WNodeScreen#EDITOR_VIEWPORT_ROOT}. */
+    /** Same string as {@link dev.propulsionteam.computed.internal.node.client.ui.WNodeScreen#EDITOR_VIEWPORT_ROOT}. */
     private static final String ROOT_CTX = "root";
 
     public record Viewport(float zoom, double panX, double panY) {}

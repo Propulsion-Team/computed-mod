@@ -22,6 +22,19 @@ public final class ComputedGraphExecution {
         }
     }
 
+    /** Runs without inheriting a server host, used to make preview/validation evaluations side-effect free. */
+    public static void withoutHost(Runnable runnable) {
+        ComputerBlockEntity previous = HOST.get();
+        HOST.remove();
+        try {
+            runnable.run();
+        } finally {
+            if (previous != null) {
+                HOST.set(previous);
+            }
+        }
+    }
+
     @Nullable
     public static ComputerBlockEntity hostOrNull() {
         return HOST.get();

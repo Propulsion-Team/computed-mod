@@ -1,10 +1,10 @@
 package dev.propulsionteam.computed.content.nodes.vanilla;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import dev.propulsionteam.computed.Computed;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -29,7 +29,7 @@ public final class IfNode extends WNode {
         });
     }
 
-    public static final ResourceLocation MENU = MenuCategories.LOGIC_COMPARISON;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.LOGIC_COMPARISON;
     public static final Component LABEL = Component.literal("If");
 
     public static void register() {

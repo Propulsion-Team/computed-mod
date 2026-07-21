@@ -1,8 +1,8 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WButton;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.elements.WButton;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -16,7 +16,7 @@ import net.minecraft.util.Mth;
 public final class MuxNode extends WNode {
 
     public static final ResourceLocation TYPE_ID =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "mux");
+            ResourceLocation.fromNamespaceAndPath("computed", "mux");
 
     private static final int MIN_INPUTS = 2;
     private static final int MAX_INPUTS = 16;
@@ -41,6 +41,7 @@ public final class MuxNode extends WNode {
     private void rebuildUiAndPins() {
         getInputs().clear();
         getOutputs().clear();
+        markPinSchemaChanged();
         getElements().clear();
 
         addInput("Select", 0xFF00FF88);
@@ -82,7 +83,7 @@ public final class MuxNode extends WNode {
         super.load(tag);
     }
 
-    public static final ResourceLocation MENU = MenuCategories.LOGIC_BINARY;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.LOGIC_BINARY;
     public static final Component LABEL = Component.literal("MUX");
 
     public static void register() {

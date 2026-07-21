@@ -1,7 +1,7 @@
 package dev.propulsionteam.computed.customnodes;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
 import dev.propulsionteam.computed.Computed;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -46,7 +46,7 @@ public final class CustomNodeRegistrar {
                 continue;
             }
             try {
-                ResourceLocation menuId = ensureMenuCategories(def.menuPath());
+                ResourceLocation menuId = ensureBuiltinNodeCategories(def.menuPath());
                 NodeRegistry.register(def.id(), (x, y) -> new CustomRuntimeNode(def, x, y));
                 NodeMenuRegistry.addNodeEntry(menuId, def.id(), Component.literal(def.label()));
                 registeredTypeIds.add(def.id());
@@ -71,7 +71,7 @@ public final class CustomNodeRegistrar {
         registeredCategoryIds.clear();
     }
 
-    private ResourceLocation ensureMenuCategories(List<String> rawPath) {
+    private ResourceLocation ensureBuiltinNodeCategories(List<String> rawPath) {
         ResourceLocation root = rootCategory();
         ResourceLocation parent = root;
         StringBuilder pathKey = new StringBuilder();

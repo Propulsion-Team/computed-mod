@@ -160,7 +160,9 @@ public class ComputerBlock extends Block implements EntityBlock {
         }
         CompoundTag bundle = computer.getGraphData();
         Peripherals.writePeripheralUnlockTag(computer, bundle);
-        PacketDistributor.sendToPlayer(serverPlayer, ComputedNetworking.openPayload(pos, bundle));
+        PacketDistributor.sendToPlayer(
+                serverPlayer,
+                ComputedNetworking.openPayload(pos, computer.getProgramRevision(), bundle));
         return InteractionResult.CONSUME;
     }
 

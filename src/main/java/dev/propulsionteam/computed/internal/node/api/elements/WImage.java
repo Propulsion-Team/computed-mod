@@ -1,6 +1,6 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;
 

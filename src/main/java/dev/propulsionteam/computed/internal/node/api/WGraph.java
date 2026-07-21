@@ -1,6 +1,7 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WSlider;
+import dev.propulsionteam.computed.internal.node.MissingNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WSlider;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -20,9 +21,15 @@ import net.minecraft.util.Mth;
  */
 public class WGraph {
 
+    public enum DiagnosticSeverity { WARNING, ERROR }
+
+    /** Runtime/editor diagnostic that never removes the source graph data. */
+    public record GraphDiagnostic(
+            DiagnosticSeverity severity, String code, String message, Set<UUID> nodeIds) {}
+
     /** Node type id for the graph tick driver (menu "Tick"). */
     public static final ResourceLocation TICK_NODE_TYPE =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "tick");
+            ResourceLocation.fromNamespaceAndPath("computed", "tick");
 
     /** Maximum updates per second for the tick node's Rate slider (matches default Minecraft TPS). */
     public static final int MAX_TICK_RATE = 20;
@@ -32,9 +39,14 @@ public class WGraph {
     private final List<WSection> sections = new ArrayList<>();
     /** UUID→node lookup; kept in sync with {@link #nodes} to avoid O(n) stream scans in hot render paths. */
     private final Map<UUID, WNode> nodeIndex = new HashMap<>();
+    private boolean pinSchemaRefreshPending;
+    private long connectionGeometryRevision;
     private final Map<UUID, List<WConnection>> outgoingConnections = new HashMap<>();
     private final Map<UUID, List<WConnection>> incomingConnections = new HashMap<>();
     private final Set<UUID> forcedDirtySources = new HashSet<>();
+    private final Set<UUID> disabledNodeIds = new HashSet<>();
+    private final List<GraphDiagnostic> diagnostics = new ArrayList<>();
+    private final List<WNode> evaluationOrder = new ArrayList<>();
     private boolean forceFullWorldStep = true;
 
     /** O(1) node lookup by id. Returns null if not present. */
@@ -160,6 +172,7 @@ public class WGraph {
     public void addNode(WNode node) {
         nodes.add(node);
         nodeIndex.put(node.getId(), node);
+        node.bindOwningGraph(this);
         dedupeFunctionBoundaryNodes();
         pruneDanglingConnections();
         updateTopology();
@@ -172,6 +185,7 @@ public class WGraph {
     public void removeNode(WNode node) {
         nodes.remove(node);
         nodeIndex.remove(node.getId());
+        node.bindOwningGraph(null);
         connections.removeIf(c -> c.sourceNode().equals(node.getId()) || c.targetNode().equals(node.getId()));
         updateTopology();
     }
@@ -181,6 +195,7 @@ public class WGraph {
      * @return A tag containing all nodes, their internal data, and connections.
      */
     public net.minecraft.nbt.CompoundTag save() {
+        refreshStableConnectionPins();
         net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
         
         net.minecraft.nbt.ListTag nodesTag = new net.minecraft.nbt.ListTag();
@@ -194,6 +209,18 @@ public class WGraph {
             c.putInt("srcP", conn.sourcePin());
             c.putString("tgt", conn.targetNode().toString());
             c.putInt("tgtP", conn.targetPin());
+            WNode source = nodeIndex.get(conn.sourceNode());
+            WNode target = nodeIndex.get(conn.targetNode());
+            String sourcePort = conn.sourcePortKey();
+            if (sourcePort == null && source != null && conn.sourcePin() >= 0 && conn.sourcePin() < source.getOutputs().size()) {
+                sourcePort = stablePortId(source.getOutputs(), conn.sourcePin(), "output");
+            }
+            if (sourcePort != null) c.putString("sourcePort", sourcePort);
+            String targetPort = conn.targetPortKey();
+            if (targetPort == null && target != null && conn.targetPin() >= 0 && conn.targetPin() < target.getInputs().size()) {
+                targetPort = stablePortId(target.getInputs(), conn.targetPin(), "input");
+            }
+            if (targetPort != null) c.putString("targetPort", targetPort);
             if (conn.waypointXs().length > 0) {
                 net.minecraft.nbt.ListTag wps = new net.minecraft.nbt.ListTag();
                 for (int j = 0; j < conn.waypointXs().length; j++) {
@@ -217,6 +244,10 @@ public class WGraph {
         return tag;
     }
 
+    private static String stablePortId(List<WPin> pins, int index, String direction) {
+        return WNode.stablePortId(pins, index, direction);
+    }
+
     /**
      * Reconstructs the graph state from a NBT CompoundTag.
      * @param tag The tag containing serialized graph data.
@@ -224,6 +255,7 @@ public class WGraph {
     public void load(net.minecraft.nbt.CompoundTag tag) {
         nodes.clear();
         nodeIndex.clear();
+        pinSchemaRefreshPending = false;
         connections.clear();
         sections.clear();
         
@@ -232,11 +264,11 @@ public class WGraph {
             net.minecraft.nbt.CompoundTag nTag = nodesTag.getCompound(i);
             net.minecraft.resources.ResourceLocation type = net.minecraft.resources.ResourceLocation.parse(nTag.getString("typeId"));
             WNode node = NodeRegistry.createNode(type, nTag.getInt("x"), nTag.getInt("y"));
-            if (node != null) {
-                node.load(nTag);
-                nodes.add(node);
-                nodeIndex.put(node.getId(), node);
-            }
+            if (node == null) node = MissingNode.fromLegacyTag(type, nTag);
+            node.load(nTag);
+            nodes.add(node);
+            nodeIndex.put(node.getId(), node);
+            node.bindOwningGraph(this);
         }
         
         net.minecraft.nbt.ListTag connsTag = tag.getList("conns", 10);
@@ -246,6 +278,14 @@ public class WGraph {
             int sp = c.getInt("srcP");
             java.util.UUID tgt = java.util.UUID.fromString(c.getString("tgt"));
             int tp = c.getInt("tgtP");
+            String sourcePort = c.contains("sourcePort") ? c.getString("sourcePort") : null;
+            String targetPort = c.contains("targetPort") ? c.getString("targetPort") : null;
+            if (c.contains("sourcePort")) {
+                sp = stablePortIndex(nodeIndex.get(src), true, c.getString("sourcePort"), sp);
+            }
+            if (c.contains("targetPort")) {
+                tp = stablePortIndex(nodeIndex.get(tgt), false, c.getString("targetPort"), tp);
+            }
             if (c.contains("wps")) {
                 net.minecraft.nbt.ListTag wps = c.getList("wps", 10);
                 int[] wx = new int[wps.size()];
@@ -255,9 +295,9 @@ public class WGraph {
                     wx[j] = w.getInt("x");
                     wy[j] = w.getInt("y");
                 }
-                connections.add(new WConnection(src, sp, tgt, tp, wx, wy));
+                connections.add(new WConnection(src, sp, tgt, tp, wx, wy, sourcePort, targetPort));
             } else {
-                connections.add(WConnection.withoutWaypoints(src, sp, tgt, tp));
+                connections.add(new WConnection(src, sp, tgt, tp, null, null, sourcePort, targetPort));
             }
         }
         net.minecraft.nbt.ListTag sectionsTag = tag.getList("sections", 10);
@@ -269,6 +309,49 @@ public class WGraph {
         tickAccumSec.clear();
         simulationStepCounter = 0;
         updateTopology();
+    }
+
+    private static int stablePortIndex(WNode node, boolean output, String key, int fallback) {
+        if (node == null || key == null || key.isBlank()) return fallback;
+        List<WPin> pins = output ? node.getOutputs() : node.getInputs();
+        String direction = output ? "output" : "input";
+        for (int i = 0; i < pins.size(); i++) {
+            if (key.equals(stablePortId(pins, i, direction))) return i;
+        }
+        return fallback;
+    }
+
+    private static int stablePortIndex(WNode node, boolean output, String key) {
+        return stablePortIndex(node, output, key, -1);
+    }
+
+    /** Remaps positional caches only after a node reports a schema generation change. */
+    private void refreshStableConnectionPins() {
+        if (!pinSchemaRefreshPending) return;
+        pinSchemaRefreshPending = false;
+        for (WConnection connection : connections) {
+            int sourcePin = connection.sourcePortKey() == null
+                    ? connection.sourcePin()
+                    : stablePortIndex(nodeIndex.get(connection.sourceNode()), true, connection.sourcePortKey());
+            int targetPin = connection.targetPortKey() == null
+                    ? connection.targetPin()
+                    : stablePortIndex(nodeIndex.get(connection.targetNode()), false, connection.targetPortKey());
+            connection.resolvePins(sourcePin, targetPin);
+        }
+        rebuildConnectionIndexes();
+        analyzeCombinationalCycles();
+        rebuildEvaluationOrder();
+        forceFullWorldStep = true;
+        connectionGeometryRevision++;
+    }
+
+    void onNodePinSchemaChanged(WNode node) {
+        if (node != null && nodeIndex.get(node.getId()) == node) pinSchemaRefreshPending = true;
+    }
+
+    public long getConnectionGeometryRevision() {
+        refreshStableConnectionPins();
+        return connectionGeometryRevision;
     }
 
     /**
@@ -301,6 +384,7 @@ public class WGraph {
         for (WNode n : extras) {
             extraIds.add(n.getId());
             nodeIndex.remove(n.getId());
+            n.bindOwningGraph(null);
         }
         connections.removeIf(
                 c -> extraIds.contains(c.sourceNode()) || extraIds.contains(c.targetNode()));
@@ -319,6 +403,44 @@ public class WGraph {
         connections.removeIf(c -> !ids.contains(c.sourceNode()) || !ids.contains(c.targetNode()));
     }
 
+    /** Returns true when the candidate closes a same-step dependency cycle. */
+    public boolean wouldIntroduceCombinationalCycle(WConnection candidate) {
+        WNode source = nodeIndex.get(candidate.sourceNode());
+        WNode target = nodeIndex.get(candidate.targetNode());
+        if (source == null || target == null || source.isStateBoundary()) {
+            return false;
+        }
+        if (source.getId().equals(target.getId())) {
+            return true;
+        }
+        ArrayDeque<UUID> pending = new ArrayDeque<>();
+        Set<UUID> visited = new HashSet<>();
+        pending.add(target.getId());
+        while (!pending.isEmpty()) {
+            UUID current = pending.removeFirst();
+            if (!visited.add(current)) {
+                continue;
+            }
+            if (current.equals(source.getId())) {
+                return true;
+            }
+            WNode currentNode = nodeIndex.get(current);
+            if (currentNode != null && currentNode.isStateBoundary()) {
+                continue;
+            }
+            for (WConnection connection : connections) {
+                if (!connection.sourceNode().equals(current)) {
+                    continue;
+                }
+                WNode next = nodeIndex.get(connection.targetNode());
+                if (next != null) {
+                    pending.addLast(next.getId());
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Establishes a connection between an output pin of a source node and an input pin of a target node.
      * @param sourceNode UUID of the source node.
@@ -326,15 +448,56 @@ public class WGraph {
      * @param targetNode UUID of the target node.
      * @param targetPin Index of the input pin.
      */
-    public void connect(UUID sourceNode, int sourcePin, UUID targetNode, int targetPin) {
-        connections.add(WConnection.withoutWaypoints(sourceNode, sourcePin, targetNode, targetPin));
-        updateTopology();
+    public boolean connect(UUID sourceNode, int sourcePin, UUID targetNode, int targetPin) {
+        return connect(WConnection.withoutWaypoints(sourceNode, sourcePin, targetNode, targetPin));
     }
 
     /** Like {@link #connect(UUID, int, UUID, int)} but preserves editor spline waypoints (paste, tools). */
-    public void connect(WConnection connection) {
+    public boolean connect(WConnection connection) {
+        connection = withStablePortKeys(connection);
+        if (wouldIntroduceCombinationalCycle(connection)) {
+            diagnostics.add(new GraphDiagnostic(
+                    DiagnosticSeverity.ERROR,
+                    "computed.cycle.rejected",
+                    "Connection rejected: combinational cycles require a state or delay node",
+                    Set.of(connection.sourceNode(), connection.targetNode())));
+            return false;
+        }
         connections.add(connection);
         updateTopology();
+        return true;
+    }
+
+    private WConnection withStablePortKeys(WConnection connection) {
+        String sourceKey = connection.sourcePortKey();
+        String targetKey = connection.targetPortKey();
+        WNode source = nodeIndex.get(connection.sourceNode());
+        WNode target = nodeIndex.get(connection.targetNode());
+        if (sourceKey == null && source != null && connection.sourcePin() >= 0
+                && connection.sourcePin() < source.getOutputs().size()) {
+            sourceKey = stablePortId(source.getOutputs(), connection.sourcePin(), "output");
+        }
+        if (targetKey == null && target != null && connection.targetPin() >= 0
+                && connection.targetPin() < target.getInputs().size()) {
+            targetKey = stablePortId(target.getInputs(), connection.targetPin(), "input");
+        }
+        return connection.withStablePorts(sourceKey, targetKey);
+    }
+
+    private boolean isConnectionUsable(WConnection connection) {
+        WNode source = nodeIndex.get(connection.sourceNode());
+        WNode target = nodeIndex.get(connection.targetNode());
+        if (source == null
+                || target == null
+                || connection.sourcePin() < 0
+                || connection.sourcePin() >= source.getOutputs().size()
+                || connection.targetPin() < 0
+                || connection.targetPin() >= target.getInputs().size()) {
+            return false;
+        }
+        WPin.DataType sourceType = source.getOutputs().get(connection.sourcePin()).getDataType();
+        WPin.DataType targetType = target.getInputs().get(connection.targetPin()).getDataType();
+        return sourceType == targetType || (sourceType == WPin.DataType.NUMBER && targetType == WPin.DataType.STRING);
     }
 
     /**
@@ -382,12 +545,34 @@ public class WGraph {
         return nodes;
     }
 
+    public List<GraphDiagnostic> getDiagnostics() {
+        return List.copyOf(diagnostics);
+    }
+
+    public boolean isNodeExecutionDisabled(UUID nodeId) {
+        return disabledNodeIds.contains(nodeId);
+    }
+
     public List<WSection> getSections() {
         return sections;
     }
 
     public int getSimulationStepCounter() {
         return simulationStepCounter;
+    }
+
+    /** Executes one detached node with graph-step services for the public API compatibility adapter. */
+    static void evaluateIsolated(WNode node, long graphStep, boolean tickPulseGate) {
+        WGraph scope = new WGraph();
+        scope.simulationStepCounter = (int) graphStep;
+        scope.evalTickPulseGate = tickPulseGate;
+        node.bindEvaluationGraph(scope);
+        try {
+            node.evaluate();
+        } finally {
+            node.bindEvaluationGraph(null);
+            scope.evalTickPulseGate = false;
+        }
     }
 
     /**
@@ -517,15 +702,16 @@ public class WGraph {
 
     /** One logical step: propagate all connections, then evaluate every node. */
     private void stepConnectionsAndEval(boolean tickPulseGate) {
+        refreshStableConnectionPins();
         evalTickPulseGate = tickPulseGate;
         try {
+            // Seed inputs from the previous committed outputs. Evaluation then walks the compiled DAG and
+            // immediately forwards each new output, so pure chains settle in one deterministic pass.
             propagateConnections();
-            for (WNode node : nodes) {
-                node.bindEvaluationGraph(this);
-                try {
-                    node.evaluate();
-                } finally {
-                    node.bindEvaluationGraph(null);
+            for (WNode node : evaluationOrder) {
+                evaluateNode(node);
+                if (!node.isStateBoundary()) {
+                    propagateOutgoingValues(node);
                 }
             }
         } finally {
@@ -534,15 +720,26 @@ public class WGraph {
     }
 
     private void stepSparseConnectionsAndEval(boolean tickPulseGate) {
+        refreshStableConnectionPins();
         evalTickPulseGate = tickPulseGate;
         ArrayDeque<WNode> queue = new ArrayDeque<>();
         Set<UUID> queued = new HashSet<>();
         try {
-            for (WNode node : nodes) {
+            // Publish every state boundary's previously committed outputs before evaluating any pure node.
+            for (WNode node : evaluationOrder) {
+                if (!node.isStateBoundary()) continue;
+                if (disabledNodeIds.contains(node.getId())) resetOutputs(node);
+                propagateOutgoing(node, queue, queued);
+            }
+            for (WNode node : evaluationOrder) {
+                if (node.isStateBoundary()) continue;
                 List<WConnection> incoming = incomingConnections.get(node.getId());
-                if (incoming != null && !incoming.isEmpty()) {
+                boolean always = node.executionPolicy()
+                        != dev.propulsionteam.computed.api.node.ExecutionPolicy.INPUT_DRIVEN;
+                if (!always && incoming != null && !incoming.isEmpty()) {
                     continue;
                 }
+                if (queued.remove(node.getId())) queue.remove(node);
                 PinSnapshot[] before = snapshotOutputs(node);
                 evaluateNode(node);
                 if (outputsChanged(node, before)
@@ -556,11 +753,16 @@ public class WGraph {
             while (!queue.isEmpty() && remaining-- > 0) {
                 WNode node = queue.removeFirst();
                 queued.remove(node.getId());
+                if (node.isStateBoundary()) continue;
                 PinSnapshot[] before = snapshotOutputs(node);
                 evaluateNode(node);
                 if (outputsChanged(node, before) || hasActivePulseOutput(node)) {
                     propagateOutgoing(node, queue, queued);
                 }
+            }
+            // Inputs are now settled. Compute and commit next state, but do not publish it until the next step.
+            for (WNode node : evaluationOrder) {
+                if (node.isStateBoundary()) evaluateNode(node);
             }
         } finally {
             evalTickPulseGate = false;
@@ -568,11 +770,26 @@ public class WGraph {
     }
 
     private void evaluateNode(WNode node) {
+        if (disabledNodeIds.contains(node.getId())) {
+            resetOutputs(node);
+            return;
+        }
         node.bindEvaluationGraph(this);
         try {
             node.evaluate();
         } finally {
             node.bindEvaluationGraph(null);
+        }
+    }
+
+    private static void resetOutputs(WNode node) {
+        for (WPin output : node.getOutputs()) {
+            output.setConnected(false);
+            switch (output.getDataType()) {
+                case NUMBER -> output.setValue(0.0);
+                case STRING -> output.setStringValue("");
+                case WIDGET -> output.setWidgetValue(null);
+            }
         }
     }
 
@@ -609,8 +826,25 @@ public class WGraph {
             if (target == null || !copyConnectionValue(source, target, conn)) {
                 continue;
             }
+            if (target.isStateBoundary()) {
+                // The new input is committed for the next graph step; state boundaries run once per step.
+                continue;
+            }
             if (queued.add(target.getId())) {
                 queue.addLast(target);
+            }
+        }
+    }
+
+    private void propagateOutgoingValues(WNode source) {
+        List<WConnection> outgoing = outgoingConnections.get(source.getId());
+        if (outgoing == null) {
+            return;
+        }
+        for (WConnection connection : outgoing) {
+            WNode target = nodeIndex.get(connection.targetNode());
+            if (target != null && !disabledNodeIds.contains(target.getId())) {
+                copyConnectionValue(source, target, connection);
             }
         }
     }
@@ -716,6 +950,9 @@ public class WGraph {
             for (WPin pin : node.getOutputs()) {
                 pin.setConnected(false);
             }
+            if (disabledNodeIds.contains(node.getId())) {
+                resetOutputs(node);
+            }
         }
         for (WConnection conn : connections) {
             WNode source = nodeIndex.get(conn.sourceNode());
@@ -769,6 +1006,8 @@ public class WGraph {
      */
     public void updateTopology() {
         rebuildConnectionIndexes();
+        analyzeCombinationalCycles();
+        rebuildEvaluationOrder();
         forceFullWorldStep = true;
 
         // Reset depths
@@ -823,6 +1062,7 @@ public class WGraph {
             incomingConnections.put(node.getId(), new ArrayList<>());
         }
         for (WConnection conn : connections) {
+            if (!isConnectionUsable(conn)) continue;
             List<WConnection> out = outgoingConnections.get(conn.sourceNode());
             List<WConnection> in = incomingConnections.get(conn.targetNode());
             if (out == null || in == null) {
@@ -833,10 +1073,131 @@ public class WGraph {
         }
     }
 
+    private void analyzeCombinationalCycles() {
+        disabledNodeIds.clear();
+        diagnostics.clear();
+        Map<UUID, Integer> indexes = new HashMap<>();
+        Map<UUID, Integer> lowLinks = new HashMap<>();
+        ArrayDeque<UUID> stack = new ArrayDeque<>();
+        Set<UUID> onStack = new HashSet<>();
+        int[] nextIndex = {0};
+        for (WNode node : nodes) {
+            if (node.isMissingType()) {
+                disabledNodeIds.add(node.getId());
+                diagnostics.add(new GraphDiagnostic(
+                        DiagnosticSeverity.ERROR,
+                        "computed.missing_node",
+                        "Node implementation is unavailable; raw data is preserved",
+                        Set.of(node.getId())));
+            }
+            if (!indexes.containsKey(node.getId())) {
+                strongConnect(node.getId(), indexes, lowLinks, stack, onStack, nextIndex);
+            }
+        }
+    }
+
+    private void rebuildEvaluationOrder() {
+        evaluationOrder.clear();
+        Map<UUID, Integer> indegree = new HashMap<>();
+        Map<UUID, Set<UUID>> adjacency = new HashMap<>();
+        for (WNode node : nodes) {
+            if (!disabledNodeIds.contains(node.getId())) {
+                indegree.put(node.getId(), 0);
+                adjacency.put(node.getId(), new HashSet<>());
+            }
+        }
+        for (WConnection connection : connections) {
+            if (!isConnectionUsable(connection)) continue;
+            WNode source = nodeIndex.get(connection.sourceNode());
+            WNode target = nodeIndex.get(connection.targetNode());
+            if (source == null
+                    || target == null
+                    || source.isStateBoundary()
+                    || !indegree.containsKey(source.getId())
+                    || !indegree.containsKey(target.getId())) {
+                continue;
+            }
+            if (adjacency.get(source.getId()).add(target.getId())) {
+                indegree.merge(target.getId(), 1, Integer::sum);
+            }
+        }
+        java.util.PriorityQueue<UUID> ready = new java.util.PriorityQueue<>();
+        indegree.forEach((id, degree) -> {
+            if (degree == 0) ready.add(id);
+        });
+        while (!ready.isEmpty()) {
+            UUID id = ready.remove();
+            WNode node = nodeIndex.get(id);
+            if (node != null) evaluationOrder.add(node);
+            for (UUID target : adjacency.getOrDefault(id, Set.of())) {
+                int remaining = indegree.merge(target, -1, Integer::sum);
+                if (remaining == 0) ready.add(target);
+            }
+        }
+    }
+
+    private void strongConnect(
+            UUID nodeId,
+            Map<UUID, Integer> indexes,
+            Map<UUID, Integer> lowLinks,
+            ArrayDeque<UUID> stack,
+            Set<UUID> onStack,
+            int[] nextIndex) {
+        int index = nextIndex[0]++;
+        indexes.put(nodeId, index);
+        lowLinks.put(nodeId, index);
+        stack.push(nodeId);
+        onStack.add(nodeId);
+
+        List<WConnection> outgoing = outgoingConnections.get(nodeId);
+        WNode sourceNode = nodeIndex.get(nodeId);
+        if (outgoing != null && (sourceNode == null || !sourceNode.isStateBoundary())) {
+            for (WConnection connection : outgoing) {
+                WNode target = nodeIndex.get(connection.targetNode());
+                if (target == null) {
+                    continue;
+                }
+                UUID targetId = target.getId();
+                if (!indexes.containsKey(targetId)) {
+                    strongConnect(targetId, indexes, lowLinks, stack, onStack, nextIndex);
+                    lowLinks.put(nodeId, Math.min(lowLinks.get(nodeId), lowLinks.get(targetId)));
+                } else if (onStack.contains(targetId)) {
+                    lowLinks.put(nodeId, Math.min(lowLinks.get(nodeId), indexes.get(targetId)));
+                }
+            }
+        }
+
+        if (!lowLinks.get(nodeId).equals(indexes.get(nodeId))) {
+            return;
+        }
+        Set<UUID> component = new HashSet<>();
+        UUID member;
+        do {
+            member = stack.pop();
+            onStack.remove(member);
+            component.add(member);
+        } while (!member.equals(nodeId));
+
+        boolean selfLoop = component.size() == 1 && connections.stream().anyMatch(
+                connection -> isConnectionUsable(connection)
+                        && connection.sourceNode().equals(nodeId)
+                        && connection.targetNode().equals(nodeId)
+                        && !nodeIndex.get(nodeId).isStateBoundary());
+        if (component.size() > 1 || selfLoop) {
+            disabledNodeIds.addAll(component);
+            diagnostics.add(new GraphDiagnostic(
+                    DiagnosticSeverity.ERROR,
+                    "computed.cycle.legacy",
+                    "Legacy combinational cycle is preserved but disabled; insert a state or delay node",
+                    Set.copyOf(component)));
+        }
+    }
+
     /**
      * @return A list of all connections in the graph.
      */
     public List<WConnection> getConnections() {
+        refreshStableConnectionPins();
         return connections;
     }
 }

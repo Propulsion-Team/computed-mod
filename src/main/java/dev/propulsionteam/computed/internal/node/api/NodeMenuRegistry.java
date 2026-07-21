@@ -1,4 +1,4 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -20,10 +20,10 @@ import net.minecraft.resources.ResourceLocation;
  */
 public final class NodeMenuRegistry {
     /** Parent id for top-level categories. */
-    public static final ResourceLocation ROOT = ResourceLocation.fromNamespaceAndPath("websnodelib", "menu_root");
+    public static final ResourceLocation ROOT = ResourceLocation.fromNamespaceAndPath("computed", "menu_root");
     /** Built-in category for node types with no explicit menu entry. */
     public static final ResourceLocation UNCATEGORIZED =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "menu_uncategorized");
+            ResourceLocation.fromNamespaceAndPath("computed", "menu_uncategorized");
 
     public record Category(ResourceLocation id, Component title, ResourceLocation parentId) {}
 
@@ -83,6 +83,14 @@ public final class NodeMenuRegistry {
 
     public static Category getCategory(ResourceLocation id) {
         return CATEGORIES.get(id);
+    }
+
+    public static List<Category> getCategories() {
+        return List.copyOf(CATEGORIES.values());
+    }
+
+    public static List<MenuEntry> getExplicitEntries() {
+        return List.copyOf(ENTRIES);
     }
 
     public static List<Category> getChildCategories(ResourceLocation parentId) {

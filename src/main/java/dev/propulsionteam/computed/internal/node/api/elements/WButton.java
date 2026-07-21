@@ -1,6 +1,8 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -19,13 +21,17 @@ public class WButton extends WElement {
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float partialTick) {
         boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
         
-        // Background
-        graphics.fill(x, y, x + width, y + height, hovered ? 0xFF444444 : 0xFF252525);
-        graphics.renderOutline(x, y, width, height, hovered ? 0xFF00FF88 : 0xFF666666);
+        ComputedEditorStyle.drawButton(graphics, x, y, width, height, hovered, false);
         
         // Label
         int textW = net.minecraft.client.Minecraft.getInstance().font.width(label);
-        graphics.drawString(net.minecraft.client.Minecraft.getInstance().font, label, x + (width - textW) / 2, y + 3, hovered ? 0xFFFFFFFF : 0xFFCCCCCC);
+        graphics.drawString(
+                net.minecraft.client.Minecraft.getInstance().font,
+                label,
+                x + (width - textW) / 2,
+                y + 3,
+                hovered ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_PRIMARY,
+                false);
     }
 
     @Override

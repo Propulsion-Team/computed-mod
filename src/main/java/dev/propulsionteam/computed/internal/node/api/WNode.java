@@ -1,5 +1,7 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
+import dev.propulsionteam.computed.api.node.ExecutionPolicy;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -33,10 +35,27 @@ public class WNode {
     private int leftMargin = 5;
     /** True when pins / elements / title changed since last {@link #updateLayout()}. */
     private boolean layoutDirty = true;
+    /** Monotonic schema generation used by WGraph to remap stable connection keys lazily. */
+    private long pinSchemaRevision;
+    private transient WGraph owningGraph;
 
     /** Called by {@link WElement#markLayoutDirty()} when a child element's measured size changes. */
     public void markLayoutDirty() {
         this.layoutDirty = true;
+    }
+
+    public void markPinSchemaChanged() {
+        pinSchemaRevision++;
+        layoutDirty = true;
+        if (owningGraph != null) owningGraph.onNodePinSchemaChanged(this);
+    }
+
+    public long getPinSchemaRevision() {
+        return pinSchemaRevision;
+    }
+
+    void bindOwningGraph(WGraph graph) {
+        owningGraph = graph;
     }
 
     private void ensureLayout() {
@@ -44,6 +63,11 @@ public class WNode {
             updateLayout();
             layoutDirty = false;
         }
+    }
+
+    /** Makes bounds current without rendering this node or any of its elements. */
+    public final void ensureLayoutUpToDate() {
+        ensureLayout();
     }
     /** Non-null only while {@link #evaluate()} runs as part of a {@link WGraph} step. */
     private transient WGraph evaluationGraph;
@@ -113,13 +137,19 @@ public class WNode {
     public void addInput(String name, int color) {
         WPin pin = new WPin(name, WPin.Type.INPUT, color);
         this.inputs.add(pin);
-        layoutDirty = true;
+        markPinSchemaChanged();
     }
 
     /** Typed input pin. */
     public void addInput(String name, WPin.DataType dataType, int color) {
         this.inputs.add(new WPin(name, WPin.Type.INPUT, dataType, color));
-        layoutDirty = true;
+        markPinSchemaChanged();
+    }
+
+    /** Typed input with an explicit stable persistence key. */
+    public void addInput(String stableKey, String name, WPin.DataType dataType, int color) {
+        this.inputs.add(new WPin(stableKey, name, WPin.Type.INPUT, dataType, color));
+        markPinSchemaChanged();
     }
 
     /**
@@ -130,13 +160,19 @@ public class WNode {
     public void addOutput(String name, int color) {
         WPin pin = new WPin(name, WPin.Type.OUTPUT, color);
         this.outputs.add(pin);
-        layoutDirty = true;
+        markPinSchemaChanged();
     }
 
     /** Typed output pin. */
     public void addOutput(String name, WPin.DataType dataType, int color) {
         this.outputs.add(new WPin(name, WPin.Type.OUTPUT, dataType, color));
-        layoutDirty = true;
+        markPinSchemaChanged();
+    }
+
+    /** Typed output with an explicit stable persistence key. */
+    public void addOutput(String stableKey, String name, WPin.DataType dataType, int color) {
+        this.outputs.add(new WPin(stableKey, name, WPin.Type.OUTPUT, dataType, color));
+        markPinSchemaChanged();
     }
 
     /**
@@ -190,21 +226,23 @@ public class WNode {
         ensureLayout();
         boolean isHovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
 
-        // Shadow/Glow
-        graphics.fill(x + 2, y + 2, x + width + 2, y + height + 2, 0x55000000);
-        
-        // Background
-        graphics.fill(x, y, x + width, y + height, isHovered ? 0xEE252525 : 0xDD1A1A1A);
-        
-        // Title Bar
-        graphics.fill(x, y, x + width, y + 15, 0x44000000);
-        graphics.fill(x, y + 14, x + width, y + 15, 0xFF00FF88);
-        
-        // Border
-        int borderCol = selected ? 0xFFFFFFFF : (isHovered ? 0xFFAAAAAA : 0xFF444444);
+        graphics.fill(x, y, x + width, y + height, ComputedEditorTheme.nodeBody(isHovered, selected, false));
+
+        // Pathmind-style tinted header with Computed's established green identity.
+        graphics.fill(x + 1, y + 1, x + width - 1, y + 14, ComputedEditorTheme.ACCENT_HEADER);
+
+        int borderCol = selected
+                ? ComputedEditorTheme.TEXT_HEADER
+                : (isHovered ? ComputedEditorTheme.BORDER_HIGHLIGHT : ComputedEditorTheme.ACCENT);
         graphics.renderOutline(x, y, width, height, borderCol);
-        
-        graphics.drawString(net.minecraft.client.Minecraft.getInstance().font, title, x + 5, y + 3, 0xFF00FF88, false);
+
+        graphics.drawString(
+                net.minecraft.client.Minecraft.getInstance().font,
+                title,
+                x + 5,
+                y + 3,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
 
         // Render elements
         int currentY = y + 20;
@@ -232,17 +270,32 @@ public class WNode {
         int left = px - (size - PIN_SIZE) / 2;
         int top = py - (size - PIN_SIZE) / 2;
 
-        if (hover) {
-            graphics.fill(left - 1, top - 1, left + size + 1, top + size + 1, 0x33FFFFFF);
-        }
-
-        graphics.fill(left, top, left + size, top + size, pin.isConnected() ? color : (color & 0x44FFFFFF));
-        graphics.renderOutline(left, top, size, size, hover ? 0xFFFFFFFF : (color | 0xFF000000));
+        graphics.fill(
+                left,
+                top,
+                left + size,
+                top + size,
+                pin.isConnected() || hover ? color : (color & 0x66FFFFFF));
+        graphics.renderOutline(
+                left,
+                top,
+                size,
+                size,
+                hover ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.SOCKET_BORDER);
+        int centerLeft = left + Math.max(1, size / 2 - 1);
+        int centerTop = top + Math.max(1, size / 2 - 1);
+        graphics.fill(centerLeft, centerTop, centerLeft + 2, centerTop + 2, ComputedEditorTheme.SOCKET_CENTER);
 
         // Pin Label
         String name = pin.getName();
         int tx = isInput ? px + 8 : px - 4 - measureTextWidth(name);
-        graphics.drawString(net.minecraft.client.Minecraft.getInstance().font, "§8" + name, tx, py - 2, 0xFFFFFFFF);
+        graphics.drawString(
+                net.minecraft.client.Minecraft.getInstance().font,
+                name,
+                tx,
+                py - 2,
+                ComputedEditorTheme.TEXT_SECONDARY,
+                false);
     }
 
     /**
@@ -336,11 +389,19 @@ public class WNode {
         tag.putInt("y", y);
         
         net.minecraft.nbt.ListTag inputsTag = new net.minecraft.nbt.ListTag();
-        for (WPin pin : inputs) inputsTag.add(pin.save());
+        for (int i = 0; i < inputs.size(); i++) {
+            WPin pin = inputs.get(i);
+            if (pin.getStableKey() == null) pin.setStableKey(stablePortId(inputs, i, "input"));
+            inputsTag.add(pin.save());
+        }
         tag.put("inputs", inputsTag);
         
         net.minecraft.nbt.ListTag outputsTag = new net.minecraft.nbt.ListTag();
-        for (WPin pin : outputs) outputsTag.add(pin.save());
+        for (int i = 0; i < outputs.size(); i++) {
+            WPin pin = outputs.get(i);
+            if (pin.getStableKey() == null) pin.setStableKey(stablePortId(outputs, i, "output"));
+            outputsTag.add(pin.save());
+        }
         tag.put("outputs", outputsTag);
         
         net.minecraft.nbt.ListTag elementsTag = new net.minecraft.nbt.ListTag();
@@ -348,6 +409,32 @@ public class WNode {
         tag.put("elements", elementsTag);
         
         return tag;
+    }
+
+    static String stablePortId(List<WPin> pins, int index, String direction) {
+        String explicit = pins.get(index).getStableKey();
+        if (explicit != null && !explicit.isBlank()) return explicit;
+        String label = pins.get(index).getName().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9_.-]+", "_")
+                .replaceAll("^[^a-z]+", "")
+                .replaceAll("_+$", "");
+        if (label.isEmpty()) label = "port";
+        String base = direction + "." + label;
+        int duplicate = 0;
+        for (int i = 0; i <= index; i++) {
+            String otherExplicit = pins.get(i).getStableKey();
+            if (base.equals(otherExplicit)) {
+                duplicate++;
+                continue;
+            }
+            String other = pins.get(i).getName().toLowerCase(java.util.Locale.ROOT)
+                    .replaceAll("[^a-z0-9_.-]+", "_")
+                    .replaceAll("^[^a-z]+", "")
+                    .replaceAll("_+$", "");
+            if (other.isEmpty()) other = "port";
+            if (other.equals(label)) duplicate++;
+        }
+        return duplicate <= 1 ? base : base + "." + duplicate;
     }
 
     public void load(net.minecraft.nbt.CompoundTag tag) {
@@ -395,6 +482,28 @@ public class WNode {
 
     /** When true, duplicate / clipboard duplicate skips this node. */
     public boolean isDuplicationLocked() {
+        return false;
+    }
+    public void clearElementFocus() {
+        for (WElement element : new ArrayList<>(elements)) {
+            element.clearFocus();
+        }
+    }
+
+    /**
+     * A state boundary publishes prior-step state and therefore breaks combinational dependency cycles.
+     * Stateful built-ins and data-driven nodes override this in the rewritten runtime.
+     */
+    public boolean isStateBoundary() {
+        return false;
+    }
+
+    /** Scheduling policy used by the dirty-propagation runtime. */
+    public ExecutionPolicy executionPolicy() {
+        return ExecutionPolicy.INPUT_DRIVEN;
+    }
+
+    public boolean isMissingType() {
         return false;
     }
     public int getX() { return x; }

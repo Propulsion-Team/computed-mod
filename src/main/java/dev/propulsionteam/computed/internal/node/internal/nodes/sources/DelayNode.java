@@ -1,19 +1,23 @@
-package dev.devce.websnodelib.internal.nodes.sources;
+package dev.propulsionteam.computed.internal.node.internal.nodes.sources;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WSlider;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WSlider;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.DoubleTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 
 public final class DelayNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("delay");
-    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("delay");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.SOURCES;
     public static final Component LABEL = Component.literal("Delay");
 
     private final WSlider delay;
@@ -50,4 +54,30 @@ public final class DelayNode extends WNode {
         NodeRegistry.register(TYPE_ID, DelayNode::new);
         NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
+
+    @Override
+    public CompoundTag save() {
+        CompoundTag tag = super.save();
+        tag.putInt("BufferHead", head);
+        ListTag values = new ListTag();
+        for (double value : buf) values.add(DoubleTag.valueOf(value));
+        tag.put("Buffer", values);
+        return tag;
+    }
+
+    @Override
+    public void load(CompoundTag tag) {
+        super.load(tag);
+        ListTag values = tag.getList("Buffer", Tag.TAG_DOUBLE);
+        if (!values.isEmpty() && values.size() <= 201) {
+            buf = new double[values.size()];
+            for (int i = 0; i < values.size(); i++) buf[i] = values.getDouble(i);
+            cap = buf.length;
+            head = Math.floorMod(tag.getInt("BufferHead"), cap);
+        }
+        getOutputs().get(0).setValue(buf[head]);
+    }
+
+    @Override
+    public boolean isStateBoundary() { return true; }
 }

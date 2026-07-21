@@ -1,6 +1,8 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.nbt.CompoundTag;
 
@@ -24,16 +26,20 @@ public class WCheckbox extends WElement {
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float partialTick) {
         boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
         
-        // Box
-        graphics.fill(x, y + 1, x + 10, y + 11, 0xFF1A1A1A);
-        graphics.renderOutline(x, y + 1, 10, 10, hovered ? 0xFF00FF88 : 0xFF444444);
+        ComputedEditorStyle.drawField(graphics, x, y + 1, 10, 10, checked, hovered);
         
         if (checked) {
-            graphics.fill(x + 2, y + 3, x + 8, y + 9, 0xFF00FF88);
+            graphics.fill(x + 2, y + 3, x + 8, y + 9, ComputedEditorTheme.ACCENT);
         }
         
         // Label
-        graphics.drawString(net.minecraft.client.Minecraft.getInstance().font, label, x + 15, y + 2, 0xFFCCCCCC);
+        graphics.drawString(
+                net.minecraft.client.Minecraft.getInstance().font,
+                label,
+                x + 15,
+                y + 2,
+                ComputedEditorTheme.TEXT_PRIMARY,
+                false);
     }
 
     @Override

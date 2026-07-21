@@ -1,12 +1,12 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.WPin;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
@@ -42,7 +42,7 @@ public final class ColorSourceNode extends WNode {
     }
 
     public static final ResourceLocation TYPE_ID = WidgetNodeIds.COLOR_SOURCE;
-    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.SOURCES;
     public static final Component LABEL = Component.literal("Color");
 
     public static void register() {

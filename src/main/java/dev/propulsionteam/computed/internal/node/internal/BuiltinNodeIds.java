@@ -1,11 +1,11 @@
-package dev.devce.websnodelib.internal;
+package dev.propulsionteam.computed.internal.node.internal;
 
 import net.minecraft.resources.ResourceLocation;
 
-public final class WsId {
-    private WsId() {}
+public final class BuiltinNodeIds {
+    private BuiltinNodeIds() {}
 
     public static ResourceLocation of(String path) {
-        return ResourceLocation.fromNamespaceAndPath("websnodelib", path);
+        return ResourceLocation.fromNamespaceAndPath("computed", path);
     }
 }

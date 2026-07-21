@@ -1,10 +1,15 @@
 package dev.propulsionteam.computed.content.blocks;
 
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.FunctionDefinitionStore;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.MissingNode;
+import dev.propulsionteam.computed.internal.node.ProgramBridge;
+import dev.propulsionteam.computed.node.program.ComputedProgram;
+import dev.propulsionteam.computed.node.program.ProgramCodec;
 import dev.propulsionteam.computed.content.ComputedRegistries;
 import dev.propulsionteam.computed.content.Peripherals;
 import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;
@@ -35,18 +40,35 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import net.minecraft.nbt.NbtIo;
 
 public class ComputerBlockEntity extends BaseContainerBlockEntity {
     public static final int CONTAINER_SIZE = 9;
+    private static final int MAX_PROGRAM_NODES = 4096;
+    private static final int MAX_PROGRAM_CONNECTIONS = 20_000;
+    private static final int MAX_PROGRAM_FUNCTIONS = 256;
+    private static final int MAX_NESTED_GRAPH_DEPTH = 16;
+    private static final int MAX_PROGRAM_BYTES = 4 * 1024 * 1024;
 
     private final NonNullList<ItemStack> items = NonNullList.withSize(CONTAINER_SIZE, ItemStack.EMPTY);
-    private final WGraph graph = new WGraph();
+    private WGraph graph = new WGraph();
     /** Saved function bodies keyed by id (parallel to graph function cards). */
-    private final FunctionDefinitionStore functionDefinitions = new FunctionDefinitionStore();
+    private FunctionDefinitionStore functionDefinitions = new FunctionDefinitionStore();
     /** Weak redstone emitted toward each {@link Direction} (neighbor on that side sees this level). */
     private final int[] redstoneEmitted = new int[6];
     private final CreateRedstoneLinkBridge createRedstoneLinks = new CreateRedstoneLinkBridge();
     private UUID computerUuid;
+    private long programRevision;
+    /** Canonical v2 source retained so unsupported addon data survives the transitional runtime. */
+    private ComputedProgram persistedProgram;
+    /**
+     * Program fields that could not be decoded (for example, a newer format version). They are
+     * written back verbatim until an explicitly validated editor save replaces them.
+     */
+    private CompoundTag unreadableProgramData;
     private transient boolean dropsHandled;
 
     public ComputerBlockEntity(BlockPos pos, BlockState state) {
@@ -185,32 +207,205 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     }
 
     public CompoundTag getGraphData() {
-        CompoundTag bundle = new CompoundTag();
-        bundle.put("ComputerGraph", graph.save());
-        bundle.put("ComputerFunctions", functionDefinitions.saveList());
-        return bundle;
+        return ProgramBridge.writeEnvelope(snapshotProgram());
     }
 
-    public void applyGraphFromNetwork(CompoundTag tag) {
+    public long getProgramRevision() {
+        return programRevision;
+    }
+
+    public record ApplyGraphResult(boolean accepted, long serverRevision, String message) {
+        static ApplyGraphResult accepted(long revision) {
+            return new ApplyGraphResult(true, revision, "ok");
+        }
+
+        static ApplyGraphResult rejected(long revision, String message) {
+            return new ApplyGraphResult(false, revision, message);
+        }
+    }
+
+    /** Validates into temporary objects and swaps them only when the complete program is valid. */
+    public ApplyGraphResult applyGraphFromNetwork(CompoundTag tag, long expectedRevision) {
+        if (expectedRevision != programRevision) {
+            return ApplyGraphResult.rejected(
+                    programRevision,
+                    "stale editor revision (expected " + programRevision + ", received " + expectedRevision + ")");
+        }
+        String sizeError = validateEncodedSize(tag);
+        if (sizeError != null) {
+            return ApplyGraphResult.rejected(programRevision, sizeError);
+        }
         CompoundTag copy = tag.copy();
         Peripherals.stripEditorOnlyTags(copy);
         java.util.Map<UUID, PinSnapshot[]> inputSnap = new java.util.HashMap<>();
         java.util.Map<UUID, PinSnapshot[]> outputSnap = new java.util.HashMap<>();
         snapshotPinValues(graph, inputSnap, outputSnap);
-        if (copy.contains("ComputerGraph", Tag.TAG_COMPOUND)) {
-            graph.load(copy.getCompound("ComputerGraph"));
-            functionDefinitions.clear();
-            if (copy.contains("ComputerFunctions")) {
-                functionDefinitions.load(copy.getList("ComputerFunctions", Tag.TAG_COMPOUND));
-            }
-        } else {
-            graph.load(copy);
-            functionDefinitions.clear();
+        ComputedProgram liveProgram = snapshotProgram();
+        ProgramBridge.RuntimeProgram decoded;
+        try {
+            decoded = ProgramBridge.decode(copy);
+        } catch (RuntimeException exception) {
+            return ApplyGraphResult.rejected(programRevision, "program could not be decoded: " + exception.getMessage());
         }
-        FunctionCardNode.applyLibraryToInnerGraphs(graph, functionDefinitions);
-        restorePinValues(graph, inputSnap, outputSnap);
+        String validationError = validateProgram(decoded.program());
+        if (validationError != null) {
+            return ApplyGraphResult.rejected(programRevision, validationError);
+        }
+        ComputedProgram stateMerged = ProgramBridge.preserveRuntimeState(decoded.program(), liveProgram);
+        ProgramBridge.RuntimeProgram stateDecoded;
+        try {
+            stateDecoded = ProgramBridge.decode(ProgramBridge.writeEnvelope(stateMerged));
+        } catch (RuntimeException exception) {
+            return ApplyGraphResult.rejected(
+                    programRevision, "program could not preserve authoritative runtime state: " + exception.getMessage());
+        }
+        WGraph nextGraph = stateDecoded.graph();
+        FunctionDefinitionStore nextFunctions = stateDecoded.functions();
+        restorePinValues(nextGraph, inputSnap, outputSnap);
+        graph = nextGraph;
+        functionDefinitions = nextFunctions;
+        programRevision++;
+        persistedProgram = stateDecoded.program().withRevision(programRevision);
+        unreadableProgramData = null;
         createRedstoneLinks.markGraphDirty();
         setChanged();
+        return ApplyGraphResult.accepted(programRevision);
+    }
+
+    private String validateProgram(ComputedProgram program) {
+        if (program.functions().size() > MAX_PROGRAM_FUNCTIONS) {
+            return "program exceeds the function limit of " + MAX_PROGRAM_FUNCTIONS;
+        }
+        long modelNodes = program.rootGraph().nodes().size();
+        long modelConnections = program.rootGraph().connections().size();
+        for (var function : program.functions()) {
+            modelNodes += function.graph().nodes().size();
+            modelConnections += function.graph().connections().size();
+        }
+        if (modelNodes > MAX_PROGRAM_NODES) {
+            return "program exceeds the node limit of " + MAX_PROGRAM_NODES;
+        }
+        if (modelConnections > MAX_PROGRAM_CONNECTIONS) {
+            return "program exceeds the connection limit of " + MAX_PROGRAM_CONNECTIONS;
+        }
+        CompoundTag legacyBundle = ProgramCodec.toLegacyBundleTag(program);
+        String structuralError = validateProgramTag(legacyBundle);
+        if (structuralError != null) return structuralError;
+
+        var incomingAnalyses = ProgramBridge.analyzeAll(program);
+        var previousAnalyses = persistedProgram == null ? List.<ProgramBridge.AnalyzedGraph>of() : ProgramBridge.analyzeAll(persistedProgram);
+        java.util.Set<GraphCycleKey> existingCycles = new java.util.HashSet<>();
+        for (var analyzedGraph : previousAnalyses) {
+            for (List<UUID> cycle : analyzedGraph.analysis().combinationalCycles()) {
+                existingCycles.add(new GraphCycleKey(analyzedGraph.graphId(), java.util.Set.copyOf(cycle)));
+            }
+        }
+        for (var analyzedGraph : incomingAnalyses) {
+            for (List<UUID> cycle : analyzedGraph.analysis().combinationalCycles()) {
+                if (!existingCycles.contains(new GraphCycleKey(analyzedGraph.graphId(), java.util.Set.copyOf(cycle)))) {
+                    return "program introduces a new combinational cycle in graph " + analyzedGraph.graphId();
+                }
+            }
+        }
+        java.util.Set<String> existingStructuralDiagnostics = new java.util.HashSet<>();
+        for (var analyzedGraph : previousAnalyses) {
+            for (var diagnostic : analyzedGraph.analysis().diagnostics()) {
+                existingStructuralDiagnostics.add(structuralDiagnosticKey(diagnostic));
+            }
+        }
+        for (var analyzedGraph : incomingAnalyses) {
+            for (var diagnostic : analyzedGraph.analysis().diagnostics()) {
+                if (diagnostic.severity()
+                                != dev.propulsionteam.computed.node.program.ProgramDiagnostic.Severity.ERROR
+                        || "placeholder_node_disabled".equals(diagnostic.code())
+                        || "combinational_cycle".equals(diagnostic.code())
+                        || "combinational_self_loop".equals(diagnostic.code())) {
+                    continue;
+                }
+                if (!existingStructuralDiagnostics.contains(structuralDiagnosticKey(diagnostic))) {
+                    return "program validation failed in graph " + analyzedGraph.graphId() + ": " + diagnostic.message();
+                }
+            }
+        }
+        return null;
+    }
+
+    private record GraphCycleKey(UUID graphId, java.util.Set<UUID> nodeIds) {}
+
+    private static String structuralDiagnosticKey(
+            dev.propulsionteam.computed.node.program.ProgramDiagnostic diagnostic) {
+        return diagnostic.code() + "|" + diagnostic.graphId() + "|" + diagnostic.nodeId() + "|"
+                + diagnostic.connectionId();
+    }
+
+    private static String validateEncodedSize(CompoundTag tag) {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (DataOutputStream output = new DataOutputStream(bytes)) {
+                NbtIo.write(tag, output);
+            }
+            return bytes.size() > MAX_PROGRAM_BYTES
+                    ? "program exceeds the encoded size limit of " + MAX_PROGRAM_BYTES + " bytes"
+                    : null;
+        } catch (IOException | RuntimeException exception) {
+            return "program NBT could not be measured safely";
+        }
+    }
+
+    private static String validateProgramTag(CompoundTag bundle) {
+        CompoundTag graphTag = bundle.contains("ComputerGraph", Tag.TAG_COMPOUND)
+                ? bundle.getCompound("ComputerGraph")
+                : bundle;
+        int[] totals = new int[2];
+        String graphError = validateGraphTag(graphTag, 0, totals);
+        if (graphError != null) {
+            return graphError;
+        }
+        ListTag functions = bundle.getList("ComputerFunctions", Tag.TAG_COMPOUND);
+        if (functions.size() > MAX_PROGRAM_FUNCTIONS) {
+            return "program exceeds the function limit of " + MAX_PROGRAM_FUNCTIONS;
+        }
+        for (int i = 0; i < functions.size(); i++) {
+            String error = validateGraphTag(functions.getCompound(i).getCompound("Body"), 1, totals);
+            if (error != null) {
+                return "function " + i + ": " + error;
+            }
+        }
+        return null;
+    }
+
+    private static String validateGraphTag(CompoundTag graphTag, int depth, int[] totals) {
+        if (depth > MAX_NESTED_GRAPH_DEPTH) {
+            return "nested functions exceed depth " + MAX_NESTED_GRAPH_DEPTH;
+        }
+        ListTag nodes = graphTag.getList("nodes", Tag.TAG_COMPOUND);
+        ListTag connections = graphTag.getList("conns", Tag.TAG_COMPOUND);
+        totals[0] += nodes.size();
+        totals[1] += connections.size();
+        if (totals[0] > MAX_PROGRAM_NODES) {
+            return "program exceeds the node limit of " + MAX_PROGRAM_NODES;
+        }
+        if (totals[1] > MAX_PROGRAM_CONNECTIONS) {
+            return "program exceeds the connection limit of " + MAX_PROGRAM_CONNECTIONS;
+        }
+        for (int i = 0; i < nodes.size(); i++) {
+            CompoundTag node = nodes.getCompound(i);
+            try {
+                ResourceLocation type = ResourceLocation.parse(node.getString("typeId"));
+                if (!NodeRegistry.isRegistered(type) && !node.getBoolean(MissingNode.MISSING_MARKER)) {
+                    return "unknown node type " + type;
+                }
+            } catch (RuntimeException exception) {
+                return "node " + i + " has an invalid type ID";
+            }
+            if (node.contains("inner", Tag.TAG_COMPOUND)) {
+                String error = validateGraphTag(node.getCompound("inner"), depth + 1, totals);
+                if (error != null) {
+                    return error;
+                }
+            }
+        }
+        return null;
     }
 
     private static void snapshotPinValues(WGraph g,
@@ -235,15 +430,11 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         for (WNode n : g.getNodes()) {
             PinSnapshot[] in = ins.get(n.getId());
             if (in != null) {
-                for (int i = 0; i < Math.min(in.length, n.getInputs().size()); i++) {
-                    in[i].restoreTo(n.getInputs().get(i));
-                }
+                restorePins(n.getInputs(), in);
             }
             PinSnapshot[] out = outs.get(n.getId());
             if (out != null) {
-                for (int i = 0; i < Math.min(out.length, n.getOutputs().size()); i++) {
-                    out[i].restoreTo(n.getOutputs().get(i));
-                }
+                restorePins(n.getOutputs(), out);
             }
             if (n instanceof FunctionCardNode fc) {
                 restorePinValues(fc.getInnerGraph(), ins, outs);
@@ -251,9 +442,25 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         }
     }
 
-    private record PinSnapshot(WPin.DataType type, double numberValue, String stringValue, Object widgetValue) {
+    private static void restorePins(List<WPin> pins, PinSnapshot[] snapshots) {
+        java.util.Map<String, PinSnapshot> byStableKey = new java.util.HashMap<>();
+        for (PinSnapshot snapshot : snapshots) {
+            if (snapshot.stableKey() != null) byStableKey.putIfAbsent(snapshot.stableKey(), snapshot);
+        }
+        for (int i = 0; i < pins.size(); i++) {
+            WPin pin = pins.get(i);
+            PinSnapshot snapshot = pin.getStableKey() == null
+                    ? (i < snapshots.length ? snapshots[i] : null)
+                    : byStableKey.get(pin.getStableKey());
+            if (snapshot != null) snapshot.restoreTo(pin);
+        }
+    }
+
+    private record PinSnapshot(
+            String stableKey, WPin.DataType type, double numberValue, String stringValue, Object widgetValue) {
         static PinSnapshot capture(WPin pin) {
-            return new PinSnapshot(pin.getDataType(), pin.getValue(), pin.getStringValue(), pin.getWidgetValue());
+            return new PinSnapshot(
+                    pin.getStableKey(), pin.getDataType(), pin.getValue(), pin.getStringValue(), pin.getWidgetValue());
         }
 
         void restoreTo(WPin pin) {
@@ -299,16 +506,8 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
         ContainerHelper.loadAllItems(tag, items, registries);
-        if (tag.contains("ComputerGraph")) {
-            graph.load(tag.getCompound("ComputerGraph"));
-        }
-        if (tag.contains("ComputerFunctions")) {
-            functionDefinitions.load(tag.getList("ComputerFunctions", Tag.TAG_COMPOUND));
-        } else {
-            functionDefinitions.clear();
-        }
         computerUuid = tag.hasUUID("ComputerUUID") ? tag.getUUID("ComputerUUID") : null;
-        hydrateFunctionCardsFromLibrary();
+        loadProgramData(tag);
         createRedstoneLinks.markGraphDirty();
     }
 
@@ -316,8 +515,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
         ContainerHelper.saveAllItems(tag, items, true, registries);
-        tag.put("ComputerGraph", graph.save());
-        tag.put("ComputerFunctions", functionDefinitions.saveList());
+        writeStoredProgram(tag);
         if (computerUuid != null) {
             tag.putUUID("ComputerUUID", computerUuid);
         }
@@ -332,6 +530,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     }
 
     public boolean hasStoredState() {
+        if (unreadableProgramData != null && !unreadableProgramData.isEmpty()) return true;
         if (!graph.getNodes().isEmpty()) return true;
         if (!functionDefinitions.isEmpty()) return true;
         for (ItemStack s : items) {
@@ -360,23 +559,98 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
         CompoundTag tag = super.getUpdateTag(registries);
-        tag.put("ComputerGraph", graph.save());
-        tag.put("ComputerFunctions", functionDefinitions.saveList());
+        writeStoredProgram(tag);
         return tag;
     }
 
     @Override
     public void handleUpdateTag(CompoundTag tag, HolderLookup.Provider registries) {
         super.handleUpdateTag(tag, registries);
-        if (tag.contains("ComputerGraph")) {
-            graph.load(tag.getCompound("ComputerGraph"));
+        loadProgramData(tag);
+    }
+
+    private ComputedProgram snapshotProgram() {
+        ComputedProgram snapshot = ProgramBridge.snapshot(graph, functionDefinitions, programRevision);
+        persistedProgram = ProgramBridge.reconcile(persistedProgram, snapshot).withRevision(programRevision);
+        return persistedProgram;
+    }
+
+    private void writeStoredProgram(CompoundTag target) {
+        if (unreadableProgramData != null && !unreadableProgramData.isEmpty()) {
+            for (String key : unreadableProgramData.getAllKeys()) {
+                Tag value = unreadableProgramData.get(key);
+                if (value != null) target.put(key, value.copy());
+            }
+            return;
         }
-        if (tag.contains("ComputerFunctions")) {
-            functionDefinitions.load(tag.getList("ComputerFunctions", Tag.TAG_COMPOUND));
-        } else {
-            functionDefinitions.clear();
+        target.put(ProgramBridge.PROGRAM_TAG, ProgramCodec.write(snapshotProgram()));
+    }
+
+    private void loadProgramData(CompoundTag tag) {
+        if (!ProgramBridge.containsProgram(tag)) {
+            graph = new WGraph();
+            functionDefinitions = new FunctionDefinitionStore();
+            persistedProgram = null;
+            unreadableProgramData = null;
+            programRevision = 0L;
+            return;
         }
-        hydrateFunctionCardsFromLibrary();
+        try {
+            ProgramBridge.RuntimeProgram decoded = ProgramBridge.decode(tag);
+            graph = decoded.graph();
+            functionDefinitions = decoded.functions();
+            long legacyRevision = tag.contains("ComputedProgramRevision")
+                    ? Math.max(0L, tag.getLong("ComputedProgramRevision"))
+                    : 0L;
+            programRevision = Math.max(decoded.program().revision(), legacyRevision);
+            persistedProgram = decoded.program().withRevision(programRevision);
+            unreadableProgramData = null;
+            hydrateFunctionCardsFromLibrary();
+        } catch (RuntimeException exception) {
+            dev.propulsionteam.computed.Computed.LOGGER.error(
+                    "Could not load Computed program at {}; preserving its raw NBT with an empty runtime",
+                    worldPosition,
+                    exception);
+            graph = new WGraph();
+            functionDefinitions = new FunctionDefinitionStore();
+            persistedProgram = null;
+            unreadableProgramData = copyProgramFields(tag);
+            programRevision = rawProgramRevision(tag);
+        }
+    }
+
+    private static CompoundTag copyProgramFields(CompoundTag source) {
+        CompoundTag preserved = new CompoundTag();
+        for (String key : List.of(
+                ProgramBridge.PROGRAM_TAG,
+                "ComputedProgramRevision",
+                "ComputerGraph",
+                "ComputerFunctions",
+                "formatVersion",
+                "revision",
+                "graph",
+                "functions",
+                "diagnostics",
+                "metadata",
+                "nodes",
+                "conns",
+                "sections",
+                "waypoints")) {
+            Tag value = source.get(key);
+            if (value != null) preserved.put(key, value.copy());
+        }
+        return preserved;
+    }
+
+    private static long rawProgramRevision(CompoundTag source) {
+        long revision = Math.max(0L, source.getLong("ComputedProgramRevision"));
+        revision = Math.max(revision, Math.max(0L, source.getLong("revision")));
+        if (source.contains(ProgramBridge.PROGRAM_TAG, Tag.TAG_COMPOUND)) {
+            revision = Math.max(
+                    revision,
+                    Math.max(0L, source.getCompound(ProgramBridge.PROGRAM_TAG).getLong("revision")));
+        }
+        return revision;
     }
 
     @Nullable

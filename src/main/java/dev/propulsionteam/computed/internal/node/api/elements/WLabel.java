@@ -1,6 +1,7 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -10,7 +11,7 @@ public class WLabel extends WElement {
     private int color;
 
     public WLabel(String text) {
-        this(text, 0xFFFFFFFF);
+        this(text, ComputedEditorTheme.TEXT_PRIMARY);
     }
 
     public WLabel(String text, int color) {

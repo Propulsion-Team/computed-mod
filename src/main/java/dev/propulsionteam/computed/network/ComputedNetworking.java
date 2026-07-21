@@ -1,8 +1,8 @@
 package dev.propulsionteam.computed.network;
 
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.ComputerEditorBridge;
 import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
@@ -62,6 +62,10 @@ public final class ComputedNetworking {
                 SaveComputerGraphPayload.TYPE,
                 SaveComputerGraphPayload.STREAM_CODEC,
                 ComputedNetworking::handleSaveGraph);
+        registrar.playToClient(
+                ComputerGraphSaveResultPayload.TYPE,
+                ComputerGraphSaveResultPayload.STREAM_CODEC,
+                ComputedNetworking::handleSaveGraphResult);
         registrar.playToServer(
                 MonitorClickPayload.TYPE,
                 MonitorClickPayload.STREAM_CODEC,
@@ -76,12 +80,21 @@ public final class ComputedNetworking {
         ctx.enqueueWork(() -> ComputedCustomNodes.applyServerDefinitions(payload.definitions()));
     }
 
-    public static OpenComputerEditorPayload openPayload(BlockPos pos, CompoundTag graphTag) {
-        return new OpenComputerEditorPayload(pos, graphTag);
+    public static OpenComputerEditorPayload openPayload(BlockPos pos, long serverRevision, CompoundTag graphTag) {
+        return new OpenComputerEditorPayload(pos, serverRevision, graphTag);
     }
 
     private static void handleOpenEditor(OpenComputerEditorPayload payload, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> ComputerEditorBridge.open(payload.pos(), payload.graphTag()));
+        ctx.enqueueWork(() -> ComputerEditorBridge.open(payload.pos(), payload.serverRevision(), payload.graphTag()));
+    }
+
+    private static void handleSaveGraphResult(ComputerGraphSaveResultPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> ComputerEditorBridge.saveResult(
+                payload.pos(),
+                payload.accepted(),
+                payload.serverRevision(),
+                payload.editorRevision(),
+                payload.message()));
     }
 
     private static void handleSaveGraph(SaveComputerGraphPayload payload, IPayloadContext ctx) {
@@ -97,26 +110,51 @@ public final class ComputedNetworking {
                         pos,
                         Math.sqrt(player.distanceToSqr(Vec3.atCenterOf(pos))),
                         Math.sqrt(MAX_EDIT_DISTANCE_SQ));
+                rejectGraphSave(player, payload, -1L, "computer is too far away");
+                return;
+            }
+            if (!player.mayBuild() || !player.level().mayInteract(player, pos)) {
+                rejectGraphSave(player, payload, -1L, "you do not have permission to edit this computer");
                 return;
             }
             BlockEntity be = player.level().getBlockEntity(pos);
             if (be instanceof ComputerBlockEntity computer) {
                 try {
-                    computer.applyGraphFromNetwork(payload.graphTag());
+                    ComputerBlockEntity.ApplyGraphResult result = computer.applyGraphFromNetwork(
+                            payload.graphTag(), payload.expectedServerRevision());
+                    PacketDistributor.sendToPlayer(player, new ComputerGraphSaveResultPayload(
+                            pos,
+                            result.accepted(),
+                            result.serverRevision(),
+                            payload.editorRevision(),
+                            result.message()));
                 } catch (Exception e) {
                     Computed.LOGGER.error(
                             "Failed to apply graph save from {} at {}",
                             player.getGameProfile().getName(),
                             pos,
                             e);
+                    PacketDistributor.sendToPlayer(player, new ComputerGraphSaveResultPayload(
+                            pos,
+                            false,
+                            computer.getProgramRevision(),
+                            payload.editorRevision(),
+                            "internal validation error"));
                 }
             } else {
                 Computed.LOGGER.debug(
                         "Rejected graph save from {} at {} (no ComputerBlockEntity)",
                         player.getGameProfile().getName(),
                         pos);
+                rejectGraphSave(player, payload, -1L, "computer is no longer available");
             }
         });
+    }
+
+    private static void rejectGraphSave(
+            ServerPlayer player, SaveComputerGraphPayload payload, long serverRevision, String message) {
+        PacketDistributor.sendToPlayer(player, new ComputerGraphSaveResultPayload(
+                payload.pos(), false, serverRevision, payload.editorRevision(), message));
     }
 
     private static void handleMonitorClick(MonitorClickPayload payload, IPayloadContext ctx) {

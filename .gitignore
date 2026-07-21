@@ -35,6 +35,7 @@ bin/
 
 ### Minecraft Modding ###
 run/
+/logs/
 !**/src/**/run/
 **/src/generated/**/.cache/
 repo/

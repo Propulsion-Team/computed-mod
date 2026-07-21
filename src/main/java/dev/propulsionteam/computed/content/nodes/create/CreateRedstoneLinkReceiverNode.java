@@ -1,12 +1,12 @@
 package dev.propulsionteam.computed.content.nodes.create;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WCheckbox;
-import dev.devce.websnodelib.api.elements.WFrequencySlotPair;
-import dev.devce.websnodelib.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WCheckbox;
+import dev.propulsionteam.computed.internal.node.api.elements.WFrequencySlotPair;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
 import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;

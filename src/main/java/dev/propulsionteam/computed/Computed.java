@@ -10,7 +10,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 
-import dev.devce.websnodelib.WebsNodeLib;
+import dev.propulsionteam.computed.internal.node.ComputedNodeSystem;
 import dev.propulsionteam.computed.content.ComputedNodes;
 import dev.propulsionteam.computed.content.ComputedRegistries;
 import dev.propulsionteam.computed.network.ComputedNetworking;
@@ -21,7 +21,7 @@ public class Computed {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public Computed(IEventBus modEventBus, ModContainer modContainer) {
-        WebsNodeLib.bootstrap();
+        ComputedNodeSystem.bootstrap();
         ComputedNodes.register();
 
         ComputedRegistries.register(modEventBus);
@@ -33,6 +33,10 @@ public class Computed {
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
-        LOGGER.info("Computed common setup");
+        event.enqueueWork(() -> {
+            ComputedNodeSystem.finalizeRegistrations();
+            LOGGER.info("Computed node registry frozen with {} public node types",
+                    dev.propulsionteam.computed.api.node.ComputedNodeApi.nodeTypes().size());
+        });
     }
 }

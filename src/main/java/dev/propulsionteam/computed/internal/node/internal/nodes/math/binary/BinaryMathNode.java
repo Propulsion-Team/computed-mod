@@ -1,7 +1,7 @@
-package dev.devce.websnodelib.internal.nodes.math.binary;
+package dev.propulsionteam.computed.internal.node.internal.nodes.math.binary;
 
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
 import net.minecraft.resources.ResourceLocation;
 
 public abstract class BinaryMathNode extends WNode {

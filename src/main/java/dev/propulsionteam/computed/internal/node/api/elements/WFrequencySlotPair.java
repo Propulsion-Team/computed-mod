@@ -1,6 +1,7 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -66,7 +67,12 @@ public class WFrequencySlotPair extends WElement {
         int fill = isRed ? RED_BG : BLUE_BG;
         int edge = isRed ? RED_EDGE : BLUE_EDGE;
         graphics.fill(ox, oy, ox + SLOT, oy + SLOT, hovered ? (fill | 0xFF000000) : fill);
-        graphics.renderOutline(ox, oy, SLOT, SLOT, hovered ? 0xFFFFFFFF : edge);
+        graphics.renderOutline(
+                ox,
+                oy,
+                SLOT,
+                SLOT,
+                hovered ? ComputedEditorTheme.TEXT_HEADER : edge);
         if (!stack.isEmpty()) {
             graphics.renderItem(stack, ox + 2, oy + 2);
         }
@@ -81,13 +87,13 @@ public class WFrequencySlotPair extends WElement {
         Minecraft mc = Minecraft.getInstance();
         if (mouseX >= ox && mouseX < ox + SLOT && mouseY >= 0 && mouseY < SLOT) {
             playClick(mc);
-            dev.devce.websnodelib.client.ui.WNodeScreen.requestItemPick(this::setRed);
+            dev.propulsionteam.computed.internal.node.client.ui.WNodeScreen.requestItemPick(this::setRed);
             return true;
         }
         int bx = ox + SLOT + GAP;
         if (mouseX >= bx && mouseX < bx + SLOT && mouseY >= 0 && mouseY < SLOT) {
             playClick(mc);
-            dev.devce.websnodelib.client.ui.WNodeScreen.requestItemPick(this::setBlue);
+            dev.propulsionteam.computed.internal.node.client.ui.WNodeScreen.requestItemPick(this::setBlue);
             return true;
         }
         return false;

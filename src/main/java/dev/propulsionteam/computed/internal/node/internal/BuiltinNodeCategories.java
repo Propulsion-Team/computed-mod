@@ -1,28 +1,28 @@
-package dev.devce.websnodelib.internal;
+package dev.propulsionteam.computed.internal.node.internal;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
-public final class MenuCategories {
-    public static final ResourceLocation MATH = WsId.of("menu_math");
-    public static final ResourceLocation MATH_BINARY = WsId.of("menu_math_binary");
-    public static final ResourceLocation MATH_UNARY = WsId.of("menu_math_unary");
-    public static final ResourceLocation MATH_TRIG = WsId.of("menu_math_trig");
-    public static final ResourceLocation SOURCES = WsId.of("menu_sources");
-    public static final ResourceLocation IO = WsId.of("menu_io");
-    public static final ResourceLocation VISUALS = WsId.of("menu_visuals");
-    public static final ResourceLocation ORGANIZATION = WsId.of("menu_organization");
-    public static final ResourceLocation LOGIC = WsId.of("menu_logic");
-    public static final ResourceLocation LOGIC_BINARY = WsId.of("menu_logic_binary");
-    public static final ResourceLocation LOGIC_UNARY = WsId.of("menu_logic_unary");
-    public static final ResourceLocation LOGIC_COMPARISON = WsId.of("menu_logic_comparison");
-    public static final ResourceLocation LOGIC_MEMORY = WsId.of("menu_logic_memory");
+public final class BuiltinNodeCategories {
+    public static final ResourceLocation MATH = BuiltinNodeIds.of("menu_math");
+    public static final ResourceLocation MATH_BINARY = BuiltinNodeIds.of("menu_math_binary");
+    public static final ResourceLocation MATH_UNARY = BuiltinNodeIds.of("menu_math_unary");
+    public static final ResourceLocation MATH_TRIG = BuiltinNodeIds.of("menu_math_trig");
+    public static final ResourceLocation SOURCES = BuiltinNodeIds.of("menu_sources");
+    public static final ResourceLocation IO = BuiltinNodeIds.of("menu_io");
+    public static final ResourceLocation VISUALS = BuiltinNodeIds.of("menu_visuals");
+    public static final ResourceLocation ORGANIZATION = BuiltinNodeIds.of("menu_organization");
+    public static final ResourceLocation LOGIC = BuiltinNodeIds.of("menu_logic");
+    public static final ResourceLocation LOGIC_BINARY = BuiltinNodeIds.of("menu_logic_binary");
+    public static final ResourceLocation LOGIC_UNARY = BuiltinNodeIds.of("menu_logic_unary");
+    public static final ResourceLocation LOGIC_COMPARISON = BuiltinNodeIds.of("menu_logic_comparison");
+    public static final ResourceLocation LOGIC_MEMORY = BuiltinNodeIds.of("menu_logic_memory");
 
     /** Sentinel: nodes whose MENU is this are hidden from the add menu. */
-    public static final ResourceLocation HIDDEN = WsId.of("menu_hidden_sentinel");
+    public static final ResourceLocation HIDDEN = BuiltinNodeIds.of("menu_hidden_sentinel");
 
-    private MenuCategories() {}
+    private BuiltinNodeCategories() {}
 
     public static void registerAll() {
         NodeMenuRegistry.registerCategory(MATH, Component.literal("Math"), NodeMenuRegistry.ROOT);

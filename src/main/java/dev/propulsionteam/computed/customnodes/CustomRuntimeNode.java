@@ -1,8 +1,8 @@
 package dev.propulsionteam.computed.customnodes;
 
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.WPin;
-import dev.devce.websnodelib.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
 import dev.propulsionteam.computed.customnodes.expr.EvalContext;
 import dev.propulsionteam.computed.customnodes.expr.FunctionRegistry;
 import dev.propulsionteam.computed.customnodes.expr.Value;
@@ -33,6 +33,11 @@ final class CustomRuntimeNode extends WNode {
         }
 
         setEvaluator(node -> evaluate((CustomRuntimeNode) node));
+    }
+
+    @Override
+    public boolean isStateBoundary() {
+        return !definition.state().isEmpty();
     }
 
     private static void evaluate(CustomRuntimeNode node) {

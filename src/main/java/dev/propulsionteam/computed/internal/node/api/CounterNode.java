@@ -1,10 +1,10 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WButton;
-import dev.devce.websnodelib.api.elements.WCheckbox;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.elements.WButton;
+import dev.propulsionteam.computed.internal.node.api.elements.WCheckbox;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -18,7 +18,7 @@ import net.minecraft.util.Mth;
 public final class CounterNode extends WNode {
 
     public static final ResourceLocation TYPE_ID =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "counter");
+            ResourceLocation.fromNamespaceAndPath("computed", "counter");
 
     private double count;
     private boolean prevStepHigh;
@@ -115,6 +115,8 @@ public final class CounterNode extends WNode {
     public CompoundTag save() {
         CompoundTag tag = super.save();
         tag.putDouble("Count", count);
+        tag.putBoolean("PrevStepHigh", prevStepHigh);
+        tag.putBoolean("PrevResetHigh", prevResetHigh);
         return tag;
     }
 
@@ -124,14 +126,20 @@ public final class CounterNode extends WNode {
         if (tag.contains("Count")) {
             count = tag.getDouble("Count");
         }
+        prevStepHigh = tag.getBoolean("PrevStepHigh");
+        prevResetHigh = tag.getBoolean("PrevResetHigh");
+        getOutputs().get(0).setValue(count);
         refreshCountLabel();
     }
 
-    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.SOURCES;
     public static final Component LABEL = Component.literal("Counter");
 
     public static void register() {
         NodeRegistry.register(TYPE_ID, CounterNode::new);
         NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
+
+    @Override
+    public boolean isStateBoundary() { return true; }
 }

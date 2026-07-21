@@ -1,4 +1,4 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
 import java.util.Collection;
 import java.util.LinkedHashMap;

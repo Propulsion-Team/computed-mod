@@ -1,9 +1,9 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WButton;
-import dev.devce.websnodelib.api.elements.WCheckbox;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.api.elements.WButton;
+import dev.propulsionteam.computed.internal.node.api.elements.WCheckbox;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.nbt.CompoundTag;
@@ -19,7 +19,7 @@ import net.minecraft.resources.ResourceLocation;
 public final class FunctionEndNode extends WNode {
 
     public static final ResourceLocation TYPE_FN_END =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "fn_end");
+            ResourceLocation.fromNamespaceAndPath("computed", "fn_end");
 
     private static final int COLOR_RETURN = 0xFFFFAA66;
 
@@ -132,6 +132,7 @@ public final class FunctionEndNode extends WNode {
 
     private void rebuildInputsFromState() {
         getInputs().clear();
+        markPinSchemaChanged();
         if (!emptyReturn) {
             for (String nm : returnNames) {
                 addInput(nm.isEmpty() ? "out" : nm, COLOR_RETURN);

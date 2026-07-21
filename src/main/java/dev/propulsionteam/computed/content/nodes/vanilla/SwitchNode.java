@@ -1,13 +1,13 @@
 package dev.propulsionteam.computed.content.nodes.vanilla;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.WPin;
-import dev.devce.websnodelib.api.elements.WButton;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.elements.WButton;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import dev.propulsionteam.computed.Computed;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -44,6 +44,7 @@ public final class SwitchNode extends WNode {
     private void rebuildUiAndPins() {
         getInputs().clear();
         getOutputs().clear();
+        markPinSchemaChanged();
         getElements().clear();
         caseFields.clear();
 
@@ -105,7 +106,7 @@ public final class SwitchNode extends WNode {
         super.load(tag);
     }
 
-    public static final ResourceLocation MENU = MenuCategories.LOGIC_COMPARISON;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.LOGIC_COMPARISON;
     public static final Component LABEL = Component.literal("Switch");
 
     public static void register() {

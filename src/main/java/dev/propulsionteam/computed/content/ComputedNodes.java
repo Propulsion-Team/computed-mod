@@ -46,7 +46,7 @@ public final class ComputedNodes {
         ConcatenateTextNode.register();
         BlockRotationNode.register();
 
-        // logic > comparison (under websnodelib's existing Logic category)
+        // logic > comparison (under the built-in Logic category)
         IfNode.register();
         SwitchNode.register();
         CommandNode.register();

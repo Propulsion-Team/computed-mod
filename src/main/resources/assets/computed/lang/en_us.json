@@ -1,4 +1,5 @@
 {
+  "gui.computed.lod.zoom_in": "Zoom in to edit ports and controls",
   "itemGroup.computed": "Computed",
   "block.computed.computer": "Computer",
   "block.computed.creative_computer": "Creative Computer",

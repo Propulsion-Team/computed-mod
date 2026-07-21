@@ -160,6 +160,11 @@ configurations {
 }
 
 dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.slf4j:slf4j-api:2.0.17'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
     // Create stack: dev runs only via localRuntime (not compile classpath / not published for dependents).
     localRuntime("com.simibubi.create:create-${minecraft_version}:${create_version}") {
         exclude group: 'com.tterrag.registrate', module: 'Registrate'
@@ -176,7 +181,7 @@ dependencies {
     // Sable Companion: compile-only so this mod loads fine without Sable. The companion artifact ships
     // a ServiceLoader stub (DefaultSableCompanion) that returns null/empty when Sable proper is absent,
     // but the SableCompanion class itself only exists at runtime if the companion mod is installed.
-    compileOnly "dev.ryanhcode.sable-companion:sable-companion-common-1.21.1:1.6.0"
+    compileOnly "dev.ryanhcode.sable-companion:sable-companion-common-1.21.1:1.5.0"
 
     // Other dev-only jars in /libs (not published); skip Create/Flywheel/Ponder filenames so Maven deps are not duplicated.
     localRuntime fileTree(dir: layout.projectDirectory.dir('libs'), include: ['*.jar']).matching {
@@ -247,6 +252,38 @@ publishing {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+def verifyNoLegacyNodeNamespace = tasks.register('verifyNoLegacyNodeNamespace') {
+    group = 'verification'
+    description = 'Fails when the distributable still ships the conflicting Webs Node Lib namespace.'
+    dependsOn tasks.named('jar')
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doLast { task ->
+        // Read the declared input instead of consulting Project.tasks during execution. Accessing
+        // the Gradle model from a task action prevents configuration-cache serialization.
+        def archive = task.inputs.files.singleFile
+        def forbidden = []
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (entry.name.startsWith('dev/devce/websnodelib/')
+                        || entry.name.startsWith('assets/websnodelib/')) {
+                    forbidden.add(entry.name)
+                }
+            }
+        }
+        if (!forbidden.isEmpty()) {
+            throw new GradleException("Legacy node namespace is still packaged: ${forbidden}")
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn verifyNoLegacyNodeNamespace
 }
 
 // IDEA no longer automatically downloads sources/javadoc jars for dependencies, so we need to explicitly enable the behavior.

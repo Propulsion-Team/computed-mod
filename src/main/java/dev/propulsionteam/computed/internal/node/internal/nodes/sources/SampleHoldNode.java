@@ -1,18 +1,18 @@
-package dev.devce.websnodelib.internal.nodes.sources;
+package dev.propulsionteam.computed.internal.node.internal.nodes.sources;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class SampleHoldNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("sample_hold");
-    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("sample_hold");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.SOURCES;
     public static final Component LABEL = Component.literal("Sample & Hold");
 
     private double held = 0.0;
@@ -36,6 +36,7 @@ public final class SampleHoldNode extends WNode {
     public CompoundTag save() {
         CompoundTag tag = super.save();
         tag.putDouble("Held", held);
+        tag.putBoolean("PrevClock", prevClock);
         return tag;
     }
 
@@ -43,10 +44,15 @@ public final class SampleHoldNode extends WNode {
     public void load(CompoundTag tag) {
         super.load(tag);
         if (tag.contains("Held")) held = tag.getDouble("Held");
+        prevClock = tag.getBoolean("PrevClock");
+        getOutputs().get(0).setValue(held);
     }
 
     public static void register() {
         NodeRegistry.register(TYPE_ID, SampleHoldNode::new);
         NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
+
+    @Override
+    public boolean isStateBoundary() { return true; }
 }

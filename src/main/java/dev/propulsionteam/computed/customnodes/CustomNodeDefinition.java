@@ -1,6 +1,6 @@
 package dev.propulsionteam.computed.customnodes;
 
-import dev.devce.websnodelib.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.WPin;
 import dev.propulsionteam.computed.customnodes.expr.Value;
 import java.nio.file.Path;
 import java.util.List;

@@ -98,7 +98,7 @@ Example mod description.
 [[dependencies.${mod_id}]]
     modId="sablecompanion"
     type="optional"
-    versionRange="[1.6.0,)"
+    versionRange="[1.5.0,)"
     ordering="AFTER"
     side="BOTH"
 

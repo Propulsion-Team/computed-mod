@@ -1,7 +1,7 @@
-package dev.devce.websnodelib.internal.nodes.logic.comparison;
+package dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison;
 
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
 import net.minecraft.resources.ResourceLocation;
 
 public abstract class ComparisonNode extends WNode {

@@ -1,17 +1,17 @@
-package dev.devce.websnodelib.internal.nodes.io;
+package dev.propulsionteam.computed.internal.node.internal.nodes.io;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class DisplayNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("display");
-    public static final ResourceLocation MENU = MenuCategories.IO;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("display");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.IO;
     public static final Component LABEL = Component.literal("Display");
 
     public DisplayNode(int x, int y) {

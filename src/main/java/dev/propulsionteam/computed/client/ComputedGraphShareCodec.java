@@ -2,10 +2,12 @@ package dev.propulsionteam.computed.client;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.FunctionDefinitionStore;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.ProgramBridge;
+import dev.propulsionteam.computed.node.program.ProgramCodec;
 import dev.propulsionteam.computed.customnodes.ComputedCustomNodes;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -31,22 +33,20 @@ import net.minecraft.resources.ResourceLocation;
 /**
  * Portable graph share strings for Computed editor.
  *
- * Format: {@code CMP1:<urlsafe-base64(gzip-nbt)>}
+ * Format: {@code CMP2:<urlsafe-base64(gzip-nbt)>}. The CMP1 decoder remains read-only for migration.
  */
 public final class ComputedGraphShareCodec {
-    public static final String PREFIX = "CMP1:";
-    private static final int FORMAT_VERSION = 1;
+    public static final String PREFIX = "CMP2:";
+    public static final String LEGACY_PREFIX = "CMP1:";
+    private static final int FORMAT_VERSION = 2;
 
     private ComputedGraphShareCodec() {}
 
     public record Decoded(CompoundTag graph, ListTag functions, int embeddedCustomNodeCount, boolean legacy) {}
 
     public static String encode(WGraph graph, FunctionDefinitionStore functionStore) {
-        CompoundTag root = new CompoundTag();
-        root.putInt("formatVersion", FORMAT_VERSION);
-        root.put("graph", graph.save().copy());
         ListTag functions = functionStore != null ? functionStore.saveList() : new ListTag();
-        root.put("functions", functions.copy());
+        CompoundTag root = ProgramCodec.write(ProgramBridge.snapshot(graph, functionStore, 0L));
 
         List<String> embedded = collectEmbeddedCustomNodeDefinitions(graph, functions);
         if (!embedded.isEmpty()) {
@@ -72,13 +72,17 @@ public final class ComputedGraphShareCodec {
             throw new IllegalArgumentException("Empty import string");
         }
 
-        if (trimmed.startsWith(PREFIX)) {
-            String payload = trimmed.substring(PREFIX.length());
+        boolean current = trimmed.startsWith(PREFIX);
+        boolean cmp1 = trimmed.startsWith(LEGACY_PREFIX);
+        if (current || cmp1) {
+            String prefix = current ? PREFIX : LEGACY_PREFIX;
+            String payload = trimmed.substring(prefix.length());
             try {
                 byte[] compressed = Base64.getUrlDecoder().decode(payload);
                 CompoundTag root = readCompressed(compressed);
                 int version = root.getInt("formatVersion");
-                if (version != FORMAT_VERSION) {
+                int expectedVersion = current ? FORMAT_VERSION : 1;
+                if (version != expectedVersion) {
                     throw new IllegalArgumentException("Unsupported share version: " + version);
                 }
                 List<String> defs = new ArrayList<>();
@@ -89,9 +93,12 @@ public final class ComputedGraphShareCodec {
                 if (!defs.isEmpty()) {
                     ComputedCustomNodes.applyServerDefinitions(defs);
                 }
-                CompoundTag graphTag = root.getCompound("graph").copy();
-                ListTag functions = root.getList("functions", Tag.TAG_COMPOUND).copy();
-                return new Decoded(graphTag, functions, defs.size(), false);
+                ProgramBridge.RuntimeProgram decoded = ProgramBridge.decode(root);
+                return new Decoded(
+                        decoded.graph().save(),
+                        decoded.functions().saveList(),
+                        defs.size(),
+                        cmp1 || decoded.migrated());
             } catch (Exception e) {
                 throw new IllegalArgumentException("Invalid compressed share string", e);
             }
@@ -106,6 +113,13 @@ public final class ComputedGraphShareCodec {
             }
             if (root.contains("graph", Tag.TAG_COMPOUND)) {
                 return new Decoded(root.getCompound("graph").copy(), root.getList("functions", Tag.TAG_COMPOUND).copy(), 0, true);
+            }
+            if (root.contains("ComputerGraph", Tag.TAG_COMPOUND)) {
+                return new Decoded(
+                        root.getCompound("ComputerGraph").copy(),
+                        root.getList("ComputerFunctions", Tag.TAG_COMPOUND).copy(),
+                        0,
+                        true);
             }
             throw new IllegalArgumentException("Legacy payload missing graph data");
         } catch (Exception e) {

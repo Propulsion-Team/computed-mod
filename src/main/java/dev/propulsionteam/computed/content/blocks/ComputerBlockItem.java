@@ -13,6 +13,7 @@ import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.block.Block;
 
 import java.util.List;
+import dev.propulsionteam.computed.internal.node.ProgramBridge;
 
 public class ComputerBlockItem extends BlockItem {
 
@@ -28,8 +29,18 @@ public class ComputerBlockItem extends BlockItem {
             return;
         }
         CompoundTag tag = data.copyTag();
-        int nodes = tag.getCompound("ComputerGraph").getList("nodes", Tag.TAG_COMPOUND).size();
-        int funcs = tag.getList("ComputerFunctions", Tag.TAG_COMPOUND).size();
+        CompoundTag program = tag.contains(ProgramBridge.PROGRAM_TAG, Tag.TAG_COMPOUND)
+                ? tag.getCompound(ProgramBridge.PROGRAM_TAG)
+                : tag;
+        int nodes;
+        int funcs;
+        if (program.contains("formatVersion") && program.contains("graph", Tag.TAG_COMPOUND)) {
+            nodes = program.getCompound("graph").getList("nodes", Tag.TAG_COMPOUND).size();
+            funcs = program.getList("functions", Tag.TAG_COMPOUND).size();
+        } else {
+            nodes = program.getCompound("ComputerGraph").getList("nodes", Tag.TAG_COMPOUND).size();
+            funcs = program.getList("ComputerFunctions", Tag.TAG_COMPOUND).size();
+        }
         if (nodes == 0 && funcs == 0) {
             return;
         }

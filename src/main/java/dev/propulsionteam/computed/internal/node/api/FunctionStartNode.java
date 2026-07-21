@@ -1,9 +1,9 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WButton;
-import dev.devce.websnodelib.api.elements.WCheckbox;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.api.elements.WButton;
+import dev.propulsionteam.computed.internal.node.api.elements.WCheckbox;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.nbt.CompoundTag;
@@ -19,9 +19,9 @@ import net.minecraft.resources.ResourceLocation;
 public final class FunctionStartNode extends WNode {
 
     public static final ResourceLocation TYPE_FN_START =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "fn_start");
+            ResourceLocation.fromNamespaceAndPath("computed", "fn_start");
 
-    /** Matches {@link dev.devce.websnodelib.internal.InternalNodes} tick node accent + delta tint (blue/cyan). */
+    /** Matches {@link dev.propulsionteam.computed.internal.node.internal.BuiltinNodes} tick node accent + delta tint (blue/cyan). */
     private static final int COLOR_TICK_PULSE = 0xFF5599FF;
     private static final int COLOR_DELTA_TIME = 0xFF88CCFF;
 
@@ -120,6 +120,7 @@ public final class FunctionStartNode extends WNode {
 
     private void rebuildOutputsFromState() {
         getOutputs().clear();
+        markPinSchemaChanged();
         if (tickable) {
             addOutput("Tick", COLOR_TICK_PULSE);
             addOutput("Delta time", COLOR_DELTA_TIME);

@@ -1,6 +1,8 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -54,29 +56,35 @@ public class WDropdown<T> extends WElement {
         var font = Minecraft.getInstance().font;
         boolean headerHovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + HEADER_H;
 
-        graphics.fill(x, y, x + width, y + HEADER_H, headerHovered ? 0xFF444444 : 0xFF252525);
-        graphics.renderOutline(x, y, width, HEADER_H, headerHovered ? 0xFF00FF88 : 0xFF666666);
+        ComputedEditorStyle.drawField(graphics, x, y, width, HEADER_H, open, headerHovered);
         String label = selected == null ? "—" : labelFn.apply(selected);
-        graphics.drawString(font, label, x + 4, y + 3, headerHovered ? 0xFFFFFFFF : 0xFFCCCCCC);
+        graphics.drawString(
+                font,
+                label,
+                x + 4,
+                y + 3,
+                headerHovered ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_PRIMARY,
+                false);
         String glyph = open ? "▲" : "▼";
         int gw = font.width(glyph);
-        graphics.drawString(font, glyph, x + width - gw - 4, y + 3, 0xFFAAAAAA);
+        graphics.drawString(font, glyph, x + width - gw - 4, y + 3, ComputedEditorTheme.TEXT_SECONDARY, false);
 
         if (!open) {
             return;
         }
         int listY = y + HEADER_H;
-        graphics.fill(x, listY, x + width, listY + options.size() * ROW_H, 0xFF1A1A1A);
-        graphics.renderOutline(x, listY, width, options.size() * ROW_H, 0xFF666666);
+        ComputedEditorStyle.drawMenuPanel(graphics, x, listY, width, options.size() * ROW_H);
         for (int i = 0; i < options.size(); i++) {
             int ry = listY + i * ROW_H;
             boolean rowHovered = mouseX >= x && mouseX <= x + width && mouseY >= ry && mouseY <= ry + ROW_H;
             T opt = options.get(i);
             boolean isSelected = opt.equals(selected);
-            int bg = rowHovered ? 0xFF3A3A3A : (isSelected ? 0xFF2A2A2A : 0xFF1A1A1A);
-            graphics.fill(x + 1, ry, x + width - 1, ry + ROW_H, bg);
+            ComputedEditorStyle.drawMenuRow(graphics, x, ry, width, ROW_H, rowHovered, isSelected);
             graphics.drawString(font, labelFn.apply(opt), x + 6, ry + 2,
-                    rowHovered ? 0xFFFFFFFF : (isSelected ? 0xFF00FF88 : 0xFFCCCCCC));
+                    rowHovered
+                            ? ComputedEditorTheme.TEXT_HEADER
+                            : (isSelected ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.TEXT_PRIMARY),
+                    false);
         }
     }
 

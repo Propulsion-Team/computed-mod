@@ -1,8 +1,9 @@
 package dev.propulsionteam.computed;
 
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.FunctionDefinitionStore;
-import dev.devce.websnodelib.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.ProgramBridge;
 import dev.propulsionteam.computed.client.ComputerEditorScreen;
 import dev.propulsionteam.computed.client.ComputerPeripheralScreen;
 import dev.propulsionteam.computed.client.ComputedClientCommands;
@@ -33,17 +34,10 @@ import net.neoforged.neoforge.common.NeoForge;
 @EventBusSubscriber(modid = Computed.MODID, value = Dist.CLIENT)
 public class ComputedClient {
     static {
-        ComputerEditorBridge.install((pos, tag) -> {
-            WGraph graph = new WGraph();
-            FunctionDefinitionStore functions = new FunctionDefinitionStore();
-            if (tag.contains("ComputerGraph")) {
-                graph.load(tag.getCompound("ComputerGraph"));
-                if (tag.contains("ComputerFunctions")) {
-                    functions.load(tag.getList("ComputerFunctions", net.minecraft.nbt.Tag.TAG_COMPOUND));
-                }
-            } else {
-                graph.load(tag);
-            }
+        ComputerEditorBridge.install((pos, serverRevision, tag) -> {
+            ProgramBridge.RuntimeProgram runtime = ProgramBridge.decode(tag);
+            WGraph graph = runtime.graph();
+            FunctionDefinitionStore functions = runtime.functions();
             FunctionCardNode.applyLibraryToInnerGraphs(graph, functions);
             Set<ResourceLocation> unlock = new HashSet<>();
             if (tag.contains(Peripherals.NBT_EDITOR_PERIPHERAL_UNLOCK, Tag.TAG_LIST)) {
@@ -58,7 +52,14 @@ public class ComputedClient {
                                     graph,
                                     functions,
                                     unlock,
-                                    Peripherals.readPlacedPeripheralHudLines(tag)));
+                                    Peripherals.readPlacedPeripheralHudLines(tag),
+                                    serverRevision,
+                                    runtime.program()));
+        }, (pos, accepted, serverRevision, editorRevision, message) -> {
+            if (Minecraft.getInstance().screen instanceof ComputerEditorScreen screen
+                    && screen.editsComputer(pos)) {
+                screen.onServerSaveResult(accepted, serverRevision, editorRevision, message);
+            }
         });
     }
 
@@ -74,13 +75,14 @@ public class ComputedClient {
     }
 
     private static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
-        dev.devce.websnodelib.internal.WebsNodeCommands.register(event.getDispatcher());
+        dev.propulsionteam.computed.internal.node.internal.ComputedNodeCommands.register(event.getDispatcher());
         ComputedClientCommands.register(event.getDispatcher());
     }
 
     @SubscribeEvent
     static void onClientSetup(FMLClientSetupEvent event) {
         Computed.LOGGER.info("Computed client setup");
+        event.enqueueWork(dev.propulsionteam.computed.api.node.client.ComputedNodeClientApi::freeze);
     }
 
     @SubscribeEvent

@@ -1,4 +1,4 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -21,6 +21,8 @@ public class WPin extends WElement {
     public static final int COLOR_WIDGET_DEFAULT = 0xFF40D0FF;
 
     private String name;
+    /** Stable persistence identity. Labels may change without breaking saved connections. */
+    private String stableKey;
     private final Type type;
     private final DataType dataType;
     private final int color;
@@ -37,6 +39,11 @@ public class WPin extends WElement {
     }
 
     public WPin(String name, Type type, DataType dataType, int color) {
+        this(null, name, type, dataType, color);
+    }
+
+    public WPin(String stableKey, String name, Type type, DataType dataType, int color) {
+        this.stableKey = stableKey == null || stableKey.isBlank() ? null : stableKey;
         this.name = name;
         this.type = type;
         this.dataType = dataType;
@@ -50,6 +57,10 @@ public class WPin extends WElement {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name != null ? name : ""; }
+    public String getStableKey() { return stableKey; }
+    public void setStableKey(String stableKey) {
+        this.stableKey = stableKey == null || stableKey.isBlank() ? null : stableKey;
+    }
     public Type getType() { return type; }
     public DataType getDataType() { return dataType; }
     public int getColor() { return color; }
@@ -58,6 +69,10 @@ public class WPin extends WElement {
 
     public net.minecraft.nbt.CompoundTag save() {
         net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
+        if (stableKey != null) tag.putString("portKey", stableKey);
+        tag.putString("name", name);
+        tag.putString("dataType", dataType.name().toLowerCase(java.util.Locale.ROOT));
+        tag.putInt("color", color);
         switch (dataType) {
             case NUMBER -> tag.putDouble("value", value);
             case STRING -> tag.putString("s", stringValue == null ? "" : stringValue);
@@ -69,6 +84,12 @@ public class WPin extends WElement {
     }
 
     public void load(net.minecraft.nbt.CompoundTag tag) {
+        if (tag.contains("portKey")) {
+            setStableKey(tag.getString("portKey"));
+        }
+        if (tag.contains("name")) {
+            setName(tag.getString("name"));
+        }
         switch (dataType) {
             case NUMBER -> this.value = tag.getDouble("value");
             case STRING -> this.stringValue = tag.contains("s") ? tag.getString("s") : "";

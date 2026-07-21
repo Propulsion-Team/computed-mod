@@ -1,18 +1,18 @@
-package dev.devce.websnodelib.internal;
+package dev.propulsionteam.computed.internal.node.internal;
 
 import com.mojang.brigadier.CommandDispatcher;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.client.ui.WNodeScreen;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.client.ui.WNodeScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.resources.ResourceLocation;
 
 /** https://github.com/webyep-art/webs_node_lib (MIT, webyep). */
-public final class WebsNodeCommands {
-    private WebsNodeCommands() {}
+public final class ComputedNodeCommands {
+    private ComputedNodeCommands() {}
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("webu")
@@ -20,8 +20,8 @@ public final class WebsNodeCommands {
                 .executes(context -> {
                     Minecraft.getInstance().tell(() -> {
                         WGraph demoGraph = new WGraph();
-                        WNode mathNode = NodeRegistry.createNode(ResourceLocation.fromNamespaceAndPath("websnodelib", "math_add"), 100, 100);
-                        WNode displayNode = NodeRegistry.createNode(ResourceLocation.fromNamespaceAndPath("websnodelib", "display"), 300, 150);
+                        WNode mathNode = NodeRegistry.createNode(ResourceLocation.fromNamespaceAndPath("computed", "math_add"), 100, 100);
+                        WNode displayNode = NodeRegistry.createNode(ResourceLocation.fromNamespaceAndPath("computed", "display"), 300, 150);
                         if (mathNode != null) {
                             demoGraph.addNode(mathNode);
                         }

@@ -1,8 +1,8 @@
 package dev.propulsionteam.computed.integration;
 
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
 import dev.propulsionteam.computed.content.nodes.create.CreateRedstoneLinkReceiverNode;
 import dev.propulsionteam.computed.content.nodes.create.CreateRedstoneLinkSenderNode;

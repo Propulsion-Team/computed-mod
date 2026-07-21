@@ -1,18 +1,18 @@
-package dev.devce.websnodelib.internal.nodes.logic.comparison;
+package dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WSlider;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WSlider;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class ApproxNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("cmp_approx");
-    public static final ResourceLocation MENU = MenuCategories.LOGIC_COMPARISON;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("cmp_approx");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.LOGIC_COMPARISON;
     public static final Component LABEL = Component.literal("~=");
 
     public ApproxNode(int x, int y) {

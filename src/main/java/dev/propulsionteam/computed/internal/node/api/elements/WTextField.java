@@ -1,6 +1,8 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -23,8 +25,8 @@ public class WTextField extends WElement {
 
     @Override
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float partialTick) {
-        graphics.fill(x, y, x + width, y + height, 0xFF000000);
-        graphics.renderOutline(x, y, width, height, focused ? 0xFF00FF88 : 0xFF888888);
+        boolean hovered = mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
+        ComputedEditorStyle.drawField(graphics, x, y, width, height, focused, hovered);
 
         Minecraft mc = Minecraft.getInstance();
         int tx = x + 2;
@@ -35,13 +37,13 @@ public class WTextField extends WElement {
         if (selStart != selEnd) {
             int left = tx + mc.font.width(value.substring(0, selStart));
             int right = tx + mc.font.width(value.substring(0, selEnd));
-            graphics.fill(left, ty, right, ty + mc.font.lineHeight, 0x6633AAFF);
+            graphics.fill(left, ty, right, ty + mc.font.lineHeight, ComputedEditorTheme.SELECTION_TEXT_BACKGROUND);
         }
 
-        graphics.drawString(mc.font, value, tx, ty, 0xFFFFFFFF);
+        graphics.drawString(mc.font, value, tx, ty, ComputedEditorTheme.TEXT_PRIMARY, false);
         if (focused && (System.currentTimeMillis() / 500) % 2 == 0) {
             int cx = tx + mc.font.width(value.substring(0, cursorPos));
-            graphics.fill(cx, ty - 1, cx + 1, ty + mc.font.lineHeight + 1, 0xFFFFFFFF);
+            graphics.fill(cx, ty - 1, cx + 1, ty + mc.font.lineHeight + 1, ComputedEditorTheme.TEXT_HEADER);
         }
     }
 
@@ -194,6 +196,11 @@ public class WTextField extends WElement {
     @Override
     public boolean isFocused() {
         return focused;
+    }
+
+    @Override
+    public void clearFocus() {
+        focused = false;
     }
 
     private boolean hasSelection() {

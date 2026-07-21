@@ -1,11 +1,11 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.WPin;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
 import dev.propulsionteam.computed.content.ComputedMenuCategories;
 import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.ProgressBarWidget;

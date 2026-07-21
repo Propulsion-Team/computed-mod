@@ -1,7 +1,8 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
 import com.mojang.blaze3d.platform.Lighting;
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -37,8 +38,8 @@ public class WViewport3D extends WElement {
     @Override
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float partialTick) {
         // Background/Frame
-        graphics.fill(x, y, x + width, y + height, 0xAA000000);
-        graphics.renderOutline(x, y, width, height, 0xFF666666);
+        graphics.fill(x, y, x + width, y + height, ComputedEditorTheme.BACKGROUND_INPUT);
+        graphics.renderOutline(x, y, width, height, ComputedEditorTheme.BORDER_DEFAULT);
 
         // Scissor to prevent bleeding out of the viewport
         double guiScale = Minecraft.getInstance().getWindow().getGuiScale();

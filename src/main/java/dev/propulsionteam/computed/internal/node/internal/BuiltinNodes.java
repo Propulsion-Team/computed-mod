@@ -1,77 +1,77 @@
-package dev.devce.websnodelib.internal;
+package dev.propulsionteam.computed.internal.node.internal;
 
-import dev.devce.websnodelib.api.CounterNode;
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.FunctionEndNode;
-import dev.devce.websnodelib.api.FunctionStartNode;
-import dev.devce.websnodelib.api.MuxNode;
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.PassOnNthRisingEdgeNode;
-import dev.devce.websnodelib.internal.nodes.io.BoolToLevelNode;
-import dev.devce.websnodelib.internal.nodes.io.DisplayNode;
-import dev.devce.websnodelib.internal.nodes.io.LevelToBoolNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.AndNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.EdgeFallNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.EdgeRiseNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.NandNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.NorNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.OrNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.SchmittNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.XnorNode;
-import dev.devce.websnodelib.internal.nodes.logic.binary.XorNode;
-import dev.devce.websnodelib.internal.nodes.logic.comparison.ApproxNode;
-import dev.devce.websnodelib.internal.nodes.logic.comparison.EqualNode;
-import dev.devce.websnodelib.internal.nodes.logic.comparison.GreaterEqualNode;
-import dev.devce.websnodelib.internal.nodes.logic.comparison.GreaterThanNode;
-import dev.devce.websnodelib.internal.nodes.logic.comparison.LessEqualNode;
-import dev.devce.websnodelib.internal.nodes.logic.comparison.LessThanNode;
-import dev.devce.websnodelib.internal.nodes.logic.memory.DFlipFlopNode;
-import dev.devce.websnodelib.internal.nodes.logic.memory.SrLatchNode;
-import dev.devce.websnodelib.internal.nodes.logic.unary.NotNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.AddNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.ClampNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.DivideNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.LerpNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.MapNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.MaxNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.MinNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.ModuloNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.MultiplyNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.PowerNode;
-import dev.devce.websnodelib.internal.nodes.math.binary.SubtractNode;
-import dev.devce.websnodelib.internal.nodes.math.trig.Atan2Node;
-import dev.devce.websnodelib.internal.nodes.math.trig.CosNode;
-import dev.devce.websnodelib.internal.nodes.math.trig.SinNode;
-import dev.devce.websnodelib.internal.nodes.math.trig.TanNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.AbsNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.AverageNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.CeilNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.ExpNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.FloorNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.Log10Node;
-import dev.devce.websnodelib.internal.nodes.math.unary.LogNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.NegateNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.QuantizeRedstoneNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.RandomNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.RoundNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.SignNode;
-import dev.devce.websnodelib.internal.nodes.math.unary.SqrtNode;
-import dev.devce.websnodelib.internal.nodes.sources.ConstantNode;
-import dev.devce.websnodelib.internal.nodes.sources.DelayNode;
-import dev.devce.websnodelib.internal.nodes.sources.OscillatorNode;
-import dev.devce.websnodelib.internal.nodes.sources.PulseNode;
-import dev.devce.websnodelib.internal.nodes.sources.SampleHoldNode;
-import dev.devce.websnodelib.internal.nodes.sources.TickNode;
+import dev.propulsionteam.computed.internal.node.api.CounterNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionEndNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionStartNode;
+import dev.propulsionteam.computed.internal.node.api.MuxNode;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.PassOnNthRisingEdgeNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.io.BoolToLevelNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.io.DisplayNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.io.LevelToBoolNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.AndNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.EdgeFallNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.EdgeRiseNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.NandNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.NorNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.OrNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.SchmittNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.XnorNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.binary.XorNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison.ApproxNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison.EqualNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison.GreaterEqualNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison.GreaterThanNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison.LessEqualNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.comparison.LessThanNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.memory.DFlipFlopNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.memory.SrLatchNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.logic.unary.NotNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.AddNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.ClampNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.DivideNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.LerpNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.MapNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.MaxNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.MinNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.ModuloNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.MultiplyNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.PowerNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.binary.SubtractNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.trig.Atan2Node;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.trig.CosNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.trig.SinNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.trig.TanNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.AbsNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.AverageNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.CeilNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.ExpNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.FloorNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.Log10Node;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.LogNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.NegateNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.QuantizeRedstoneNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.RandomNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.RoundNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.SignNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.math.unary.SqrtNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.sources.ConstantNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.sources.DelayNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.sources.OscillatorNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.sources.PulseNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.sources.SampleHoldNode;
+import dev.propulsionteam.computed.internal.node.internal.nodes.sources.TickNode;
 import net.minecraft.network.chat.Component;
 import net.neoforged.fml.loading.FMLEnvironment;
 
 /** https://github.com/webyep-art/webs_node_lib (MIT, webyep). */
-public final class InternalNodes {
+public final class BuiltinNodes {
 
-    private InternalNodes() {}
+    private BuiltinNodes() {}
 
     public static void register() {
-        MenuCategories.registerAll();
+        BuiltinNodeCategories.registerAll();
 
         // math/binary
         AddNode.register();
@@ -118,8 +118,8 @@ public final class InternalNodes {
 
         // organization (tool_section is editor-only — menu entry without NodeRegistry)
         NodeMenuRegistry.addNodeEntry(
-                MenuCategories.ORGANIZATION,
-                WsId.of("tool_section"),
+                BuiltinNodeCategories.ORGANIZATION,
+                BuiltinNodeIds.of("tool_section"),
                 Component.literal("Section"));
 
         // logic/unary
@@ -176,8 +176,8 @@ public final class InternalNodes {
         if (FMLEnvironment.dist.isDedicatedServer()) {
             return;
         }
-        registerNodeClass("dev.devce.websnodelib.internal.nodes.visuals.Viewport3DNode");
-        registerNodeClass("dev.devce.websnodelib.internal.nodes.visuals.RgbPreviewNode");
+        registerNodeClass("dev.propulsionteam.computed.internal.node.internal.nodes.visuals.Viewport3DNode");
+        registerNodeClass("dev.propulsionteam.computed.internal.node.internal.nodes.visuals.RgbPreviewNode");
     }
 
     private static void registerNodeClass(String className) {

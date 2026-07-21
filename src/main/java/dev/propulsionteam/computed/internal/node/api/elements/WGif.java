@@ -1,6 +1,6 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.texture.DynamicTexture;
@@ -54,7 +54,7 @@ public class WGif extends WElement {
                     }
                 }
 
-                ResourceLocation loc = ResourceLocation.fromNamespaceAndPath("websnodelib", "gif_frame_" + System.nanoTime() + "_" + i);
+                ResourceLocation loc = ResourceLocation.fromNamespaceAndPath("computed", "gif_frame_" + System.nanoTime() + "_" + i);
                 Minecraft.getInstance().getTextureManager().register(loc, new DynamicTexture(nImg));
                 frames.add(loc);
                 

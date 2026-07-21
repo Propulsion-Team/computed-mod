@@ -1,10 +1,10 @@
 package dev.propulsionteam.computed.content.nodes.widgets;
 
-import dev.devce.websnodelib.api.WElement;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WDropdown;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WDropdown;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
 import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.Widget;
 import net.minecraft.client.gui.GuiGraphics;

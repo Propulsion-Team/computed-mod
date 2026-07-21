@@ -1,6 +1,8 @@
-package dev.devce.websnodelib.api.elements;
+package dev.propulsionteam.computed.internal.node.api.elements;
 
-import dev.devce.websnodelib.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.nbt.CompoundTag;
@@ -44,35 +46,45 @@ public class WSlider extends WElement {
         }
 
         // Background
-        graphics.fill(x, y + 4, x + barWidth, y + 10, 0xFF121212);
-        graphics.renderOutline(x, y + 4, barWidth, 6, 0xFF444444);
+        graphics.fill(x, y + 4, x + barWidth, y + 10, ComputedEditorTheme.BACKGROUND_INPUT);
+        graphics.renderOutline(x, y + 4, barWidth, 6, ComputedEditorTheme.BORDER_DEFAULT);
 
         // Fill
         int fillW = (int) ((value - min) / (max - min) * barWidth);
-        graphics.fill(x, y + 4, x + fillW, y + 10, 0xAA00FF88);
+        graphics.fill(x, y + 4, x + fillW, y + 10, ComputedEditorTheme.ACCENT_HEADER);
 
         // Knob
-        graphics.fill(x + fillW - 2, y + 2, x + fillW + 2, y + 12, barHovered || dragging ? 0xFFFFFFFF : 0xFF00FF88);
+        graphics.fill(
+                x + fillW - 2,
+                y + 2,
+                x + fillW + 2,
+                y + 12,
+                barHovered || dragging ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.ACCENT);
 
         // Label (above)
         Minecraft mc = Minecraft.getInstance();
         String text = String.format("%s: %s", label, formatValue(value));
-        graphics.drawString(mc.font, text, x, y - 8, 0xFF888888);
+        graphics.drawString(mc.font, text, x, y - 8, ComputedEditorTheme.TEXT_SECONDARY, false);
 
         // Input box (right)
         int ix = x + barWidth + GAP;
         int iy = y + 2;
         int ih = 10;
-        graphics.fill(ix, iy, ix + INPUT_W, iy + ih, 0xFF000000);
-        graphics.renderOutline(ix, iy, INPUT_W, ih, inputFocused ? 0xFF00FF88 : 0xFF666666);
+        ComputedEditorStyle.drawField(graphics, ix, iy, INPUT_W, ih, inputFocused, false);
         String shown = inputFocused ? inputBuffer : formatValue(value);
         int textW = mc.font.width(shown);
         int tx = ix + Math.max(2, INPUT_W - 3 - textW);
         int ty = iy + 1;
-        graphics.drawString(mc.font, shown, tx, ty, inputFocused ? 0xFFFFFFFF : 0xFFCCCCCC, false);
+        graphics.drawString(
+                mc.font,
+                shown,
+                tx,
+                ty,
+                inputFocused ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_PRIMARY,
+                false);
         if (inputFocused && (System.currentTimeMillis() / 500) % 2 == 0) {
             int cx = tx + textW;
-            graphics.fill(cx, ty - 1, cx + 1, ty + mc.font.lineHeight, 0xFFFFFFFF);
+            graphics.fill(cx, ty - 1, cx + 1, ty + mc.font.lineHeight, ComputedEditorTheme.TEXT_HEADER);
         }
     }
 
@@ -156,6 +168,13 @@ public class WSlider extends WElement {
     @Override
     public boolean isFocused() {
         return inputFocused;
+    }
+
+    @Override
+    public void clearFocus() {
+        commitInputIfFocused();
+        inputFocused = false;
+        dragging = false;
     }
 
     private void commitInputIfFocused() {

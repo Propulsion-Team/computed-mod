@@ -1,6 +1,6 @@
 package dev.propulsionteam.computed.content;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
 import dev.propulsionteam.computed.Computed;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;

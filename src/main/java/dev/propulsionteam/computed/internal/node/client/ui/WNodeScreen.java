@@ -1,17 +1,32 @@
 /** https://github.com/webyep-art/webs_node_lib (MIT, webyep). */
-package dev.devce.websnodelib.client.ui;
+package dev.propulsionteam.computed.internal.node.client.ui;
 
-import dev.devce.websnodelib.api.FunctionCardNode;
-import dev.devce.websnodelib.api.FunctionDefinitionStore;
-import dev.devce.websnodelib.api.UiKeyTextures;
-import dev.devce.websnodelib.api.FunctionEndNode;
-import dev.devce.websnodelib.api.FunctionStartNode;
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.WConnection;
+import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore;
+import dev.propulsionteam.computed.internal.node.api.UiKeyTextures;
+import dev.propulsionteam.computed.internal.node.api.FunctionEndNode;
+import dev.propulsionteam.computed.internal.node.api.FunctionStartNode;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.WConnection;
 import dev.propulsionteam.computed.client.ComputedGraphShareCodec;
+import dev.propulsionteam.computed.internal.node.ProgramBridge;
+import dev.propulsionteam.computed.node.program.ProgramCodec;
+import dev.propulsionteam.computed.client.editor.DiagnosticTarget;
+import dev.propulsionteam.computed.client.editor.EditorCommand;
+import dev.propulsionteam.computed.client.editor.EditorDiagnostic;
+import dev.propulsionteam.computed.client.editor.EditorHistory;
+import dev.propulsionteam.computed.client.editor.EditorDetailLevel;
+import dev.propulsionteam.computed.client.editor.GraphPoint;
+import dev.propulsionteam.computed.client.editor.GraphRect;
+import dev.propulsionteam.computed.client.editor.UniformGridSpatialIndex;
+import dev.propulsionteam.computed.internal.node.client.editor.GraphDiagnosticsController;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
+import dev.propulsionteam.computed.internal.node.client.editor.NodeLodRenderer;
+import dev.propulsionteam.computed.internal.node.client.editor.WireEditorController;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -39,7 +54,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Objects;
 import java.util.Set;
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -65,6 +79,7 @@ public class WNodeScreen extends Screen {
     private static final float GRID_SPACING_SCREEN_PX = 20f;
     /** Target minimum stroke width on screen (px); grows in graph space when zoomed out so lines stay visible. */
     private static final float GRID_LINE_WIDTH_SCREEN_PX = 1.35f;
+    private static final float ZOOM_SCROLL_STEP = 0.05f;
 
     /** Fills the window; inset becomes 0. Always on — windowed mode just hides content for no gain. */
     private final boolean editorFullscreen = true;
@@ -116,7 +131,7 @@ public class WNodeScreen extends Screen {
     private static final ResourceLocation KEY_CAP_X = UiKeyTextures.key("x");
     private static final ResourceLocation KEY_CAP_ESC = UiKeyTextures.key("esc");
     private static final ResourceLocation SECTION_TOOL_TYPE =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "tool_section");
+            ResourceLocation.fromNamespaceAndPath("computed", "tool_section");
 
     /** Current editing graph (may be a nested {@link FunctionCardNode}'s inner graph). */
     private WGraph graph;
@@ -166,11 +181,30 @@ public class WNodeScreen extends Screen {
 
     private final ArrayDeque<FunctionEditFrame> functionEditStack = new ArrayDeque<>();
 
-    /** Graph snapshots for undo/redo (node positions, wiring, node settings). */
+    /** Transitional snapshot commands preserve the current editor's complete undo semantics. */
     private static final int MAX_UNDO = 80;
-    private final ArrayDeque<CompoundTag> undoStack = new ArrayDeque<>();
-    private final ArrayDeque<CompoundTag> redoStack = new ArrayDeque<>();
+    private final EditorHistory<WNodeScreen> editorHistory;
     private boolean historySuspended = false;
+    /** Monotonic client-side edit generation used by transactional autosave. */
+    private long editorRevision;
+
+    private static final double NODE_INDEX_CELL_SIZE = 192.0;
+    private static final double NODE_INDEX_PADDING = 10.0;
+    private final UniformGridSpatialIndex<UUID, WNode> nodeSpatialIndex =
+            new UniformGridSpatialIndex<>(NODE_INDEX_CELL_SIZE);
+    private final Map<UUID, Integer> indexedNodeOrder = new HashMap<>();
+    private final Set<WNode> spatiallyInitializedNodes =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    private WGraph indexedGraph;
+    private long indexedEditorRevision = Long.MIN_VALUE;
+
+    private final WireEditorController wireController = new WireEditorController();
+    private final NodeLodRenderer nodeLodRenderer = new NodeLodRenderer();
+    private EditorDetailLevel editorDetailLevel = EditorDetailLevel.FULL;
+    private boolean showLodInteractionHint;
+
+    private final GraphDiagnosticsController diagnosticsController = new GraphDiagnosticsController();
+    private boolean diagnosticsPanelOpen;
     
     // Viewport panning and zoom
     private double panX = 0;
@@ -232,26 +266,6 @@ public class WNodeScreen extends Screen {
     private int pendingWireFrozenTy;
     private int mouseX, mouseY;
 
-    /** Editor spline: hover and drag state (graph space). */
-    private enum WireHoverKind {
-        NONE,
-        WAYPOINT,
-        /** Near curve with a valid midpoint for adding a waypoint (ghost shown). */
-        INSERT_GHOST,
-        /** Near curve (e.g. Alt+delete wire) but not a valid add point. */
-        CURVE_ONLY
-    }
-
-    private static final int[] WIRE_ARGB_PALETTE = {
-        0xAA00FF88, 0xAA6B9CFF, 0xFFFFB84D, 0xFFFF6B9A, 0xAA3DFFDA, 0xFFFF9B6B
-    };
-    private static final int WIRE_INSERT_GHOST_ARGB = 0xEE66EEFF;
-    private WireHoverKind wireHoverKind = WireHoverKind.NONE;
-    private int wireHoverConnIdx = -1;
-    private int wireHoverWaypointIdx;
-    private int wireHoverInsertSeg;
-    private int wireHoverInsertGx;
-    private int wireHoverInsertGy;
     private int draggingWireConnIdx = -1;
     private int draggingWireWaypointIdx = -1;
     
@@ -264,7 +278,7 @@ public class WNodeScreen extends Screen {
     private UUID selectedSectionId = null;
     private UUID renamingSectionId = null;
     private String sectionRenameBuffer = "";
-    /** Like {@link dev.devce.websnodelib.api.elements.WTextField}: selection is active when this differs from cursor. */
+    /** Like {@link dev.propulsionteam.computed.internal.node.api.elements.WTextField}: selection is active when this differs from cursor. */
     private int sectionRenameCursor = 0;
     private int sectionRenameSelectionPos = 0;
     private boolean showSectionsSidebar = false;
@@ -302,7 +316,7 @@ public class WNodeScreen extends Screen {
     /** 0–3 = R,G,B,A slider drag; -1 = none. */
     private int sectionPickDragChannel = -1;
 
-    /** {@link dev.devce.websnodelib.api.elements.WItemPickSlot} uses this host to open the picker. */
+    /** {@link dev.propulsionteam.computed.internal.node.api.elements.WItemPickSlot} uses this host to open the picker. */
     private static WNodeScreen activeItemPickHost;
 
     private boolean itemPickerOpen;
@@ -319,12 +333,6 @@ public class WNodeScreen extends Screen {
     private long lastFrameTimeNs = 0;
     /** False after the first {@link #init()} so window resize does not reset undo / replay open animation. */
     private boolean editorFirstInit = true;
-    /** Wall-clock scroll for wire pulses; smooth at any tick rate (not tied to {@link WGraph#getSimulationStepCounter()}). */
-    private float wirePulseScroll;
-    /** Reusable scratch buffers for {@link #drawConnection} to avoid per-frame {@code int[]} allocation per wire. */
-    private int[] wireChainXs = new int[4];
-    private int[] wireChainYs = new int[4];
-    
     /**
      * Particle system for the background.
      */
@@ -447,10 +455,11 @@ public class WNodeScreen extends Screen {
 
     public WNodeScreen(
             WGraph graph, FunctionDefinitionStore functionStore, Predicate<ResourceLocation> editorPeripheralLocked) {
-        super(Component.literal("Web's Node Editor"));
+        super(Component.literal("Computed Node Editor"));
         this.graph = graph;
         this.functionStore = functionStore;
         this.editorPeripheralLocked = editorPeripheralLocked;
+        this.editorHistory = new EditorHistory<>(this, MAX_UNDO);
     }
 
     /** True when the computer editor should show hardware-missing treatment for this node type. */
@@ -501,15 +510,15 @@ public class WNodeScreen extends Screen {
         int h = node.getHeight();
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 5);
-        graphics.fill(x, y, x + w, y + h, 0xD0220808);
-        graphics.renderOutline(x, y, w, h, 0xFFFF5555);
-        graphics.renderOutline(x + 1, y + 1, w - 2, h - 2, 0x88FF3333);
+        graphics.fill(x, y, x + w, y + h, ComputedEditorTheme.DANGER_BACKGROUND);
+        graphics.renderOutline(x, y, w, h, ComputedEditorTheme.STATUS_LOCKED);
+        graphics.renderOutline(x + 1, y + 1, w - 2, h - 2, ComputedEditorTheme.BORDER_INNER);
         String msg = Component.translatable("gui.computed.peripheral_not_available").getString();
         int tw = font.width(msg);
         int tx = x + (w - tw) / 2;
         int ty = y + (h - font.lineHeight) / 2;
         graphics.drawString(font, msg, tx + 1, ty + 1, 0xFF000000, false);
-        graphics.drawString(font, msg, tx, ty, 0xFFFFE0E0, false);
+        graphics.drawString(font, msg, tx, ty, ComputedEditorTheme.STATUS_LOCKED_TEXT, false);
         graphics.pose().popPose();
     }
 
@@ -519,8 +528,8 @@ public class WNodeScreen extends Screen {
         functionEditStack.push(new FunctionEditFrame(graph, host));
         graph = host.getInnerGraph();
         graph.updateTopology();
-        undoStack.clear();
-        redoStack.clear();
+        editorHistory.discardCommands();
+        invalidateEditorInfrastructure();
         selectedNode = null;
         selectedSectionId = null;
         isSearching = false;
@@ -598,8 +607,8 @@ public class WNodeScreen extends Screen {
             f.openedHost().syncPinsFromInner();
         }
         graph.updateTopology();
-        undoStack.clear();
-        redoStack.clear();
+        editorHistory.discardCommands();
+        invalidateEditorInfrastructure();
         selectedNode = null;
         if (!loadEditorViewport(editorViewportContextKey())) {
             applyDefaultViewportForContext(editorViewportContextKey());
@@ -658,6 +667,7 @@ public class WNodeScreen extends Screen {
         this.panX = panX;
         this.panY = panY;
         this.zoom = Mth.clamp(zoom, 0.1f, 3.0f);
+        updateEditorDetailLevel();
     }
 
     protected final double editorPanX() {
@@ -818,6 +828,140 @@ public class WNodeScreen extends Screen {
                         .thenComparingInt(WNode::getY)
                         .thenComparingInt(WNode::getX)
                         .thenComparing(WNode::getId));
+    }
+
+    private double graphToScreenX(double graphX) {
+        float s = editorContentScale();
+        return width / 2.0 + s * (graphX + panX - width / 2.0);
+    }
+
+    private double graphToScreenY(double graphY) {
+        float s = editorContentScale();
+        return height / 2.0 + s * (graphY + panY - height / 2.0);
+    }
+
+    private void updateEditorDetailLevel() {
+        EditorDetailLevel next = editorDetailLevel.update(zoom);
+        if (next != editorDetailLevel && next != EditorDetailLevel.FULL && graph != null) {
+            graph.getNodes().forEach(WNode::clearElementFocus);
+        }
+        editorDetailLevel = next;
+    }
+
+    /** Existing detail-dependent gestures finish with their original targets before LOD takes effect. */
+    private EditorDetailLevel effectiveDetailLevel() {
+        if (linkingNode != null || draggingWireConnIdx >= 0) {
+            return EditorDetailLevel.FULL;
+        }
+        return editorDetailLevel;
+    }
+
+    private static GraphRect indexedBounds(WNode node) {
+        return GraphRect.fromPositionAndSize(
+                        node.getX(), node.getY(), Math.max(0, node.getWidth()), Math.max(0, node.getHeight()))
+                .expanded(NODE_INDEX_PADDING);
+    }
+
+    private void invalidateEditorInfrastructure() {
+        indexedGraph = null;
+        indexedEditorRevision = Long.MIN_VALUE;
+        nodeSpatialIndex.clear();
+        indexedNodeOrder.clear();
+        wireController.invalidate();
+        diagnosticsController.invalidate();
+    }
+
+    private void ensureNodeSpatialIndex() {
+        if (indexedGraph == graph
+                && indexedEditorRevision == editorRevision
+                && nodeSpatialIndex.size() == graph.getNodes().size()) {
+            return;
+        }
+        nodeSpatialIndex.clear();
+        indexedNodeOrder.clear();
+        int order = 0;
+        for (WNode node : graph.getNodes()) {
+            if (spatiallyInitializedNodes.add(node)) {
+                node.updateLayout();
+            }
+            if (nodeSpatialIndex.get(node.getId()).isPresent()) {
+                nodeSpatialIndex.update(node.getId(), node, indexedBounds(node));
+            } else {
+                nodeSpatialIndex.insert(node.getId(), node, indexedBounds(node));
+            }
+            indexedNodeOrder.put(node.getId(), order++);
+        }
+        indexedGraph = graph;
+        indexedEditorRevision = editorRevision;
+    }
+
+    private void updateIndexedNode(WNode node) {
+        if (indexedGraph != graph || node == null) {
+            return;
+        }
+        if (!nodeSpatialIndex.update(node.getId(), node, indexedBounds(node))) {
+            nodeSpatialIndex.insert(node.getId(), node, indexedBounds(node));
+            indexedNodeOrder.put(node.getId(), graph.getNodes().indexOf(node));
+        }
+    }
+
+    private List<WNode> nodesAtGraphPoint(int graphX, int graphY, boolean topFirst) {
+        ensureNodeSpatialIndex();
+        List<WNode> result = new ArrayList<>();
+        for (UniformGridSpatialIndex.SpatialEntry<UUID, WNode> entry :
+                nodeSpatialIndex.query(new GraphPoint(graphX, graphY))) {
+            result.add(entry.value());
+        }
+        Comparator<WNode> order = Comparator.comparingInt(node -> indexedNodeOrder.getOrDefault(node.getId(), -1));
+        result.sort(topFirst ? order.reversed() : order);
+        return result;
+    }
+
+    private List<WNode> nodesIntersectingGraphRect(GraphRect area) {
+        ensureNodeSpatialIndex();
+        List<WNode> result = new ArrayList<>();
+        for (UniformGridSpatialIndex.SpatialEntry<UUID, WNode> entry : nodeSpatialIndex.query(area)) {
+            result.add(entry.value());
+        }
+        return result;
+    }
+
+    private List<WNode> visibleNodes(int screenLeft, int screenTop, int screenRight, int screenBottom) {
+        ensureNodeSpatialIndex();
+        int graphLeft = screenToGraphX(screenLeft);
+        int graphTop = screenToGraphY(screenTop);
+        int graphRight = screenToGraphX(screenRight);
+        int graphBottom = screenToGraphY(screenBottom);
+        GraphRect viewport = new GraphRect(
+                        Math.min(graphLeft, graphRight),
+                        Math.min(graphTop, graphBottom),
+                        Math.max(graphLeft, graphRight),
+                        Math.max(graphTop, graphBottom))
+                .expanded(24.0 / Math.max(0.1f, editorContentScale()));
+        List<WNode> result = new ArrayList<>();
+        for (UniformGridSpatialIndex.SpatialEntry<UUID, WNode> entry : nodeSpatialIndex.query(viewport)) {
+            result.add(entry.value());
+        }
+        return result;
+    }
+
+    private GraphRect graphViewport(int screenLeft, int screenTop, int screenRight, int screenBottom, double padding) {
+        int graphLeft = screenToGraphX(screenLeft);
+        int graphTop = screenToGraphY(screenTop);
+        int graphRight = screenToGraphX(screenRight);
+        int graphBottom = screenToGraphY(screenBottom);
+        return new GraphRect(
+                        Math.min(graphLeft, graphRight),
+                        Math.min(graphTop, graphBottom),
+                        Math.max(graphLeft, graphRight),
+                        Math.max(graphTop, graphBottom))
+                .expanded(padding);
+    }
+
+    private void refreshEditorDiagnostics() {
+        if (diagnosticsController.refresh(graph).isEmpty()) {
+            diagnosticsPanelOpen = false;
+        }
     }
 
     private int sectionsToggleX() {
@@ -1056,13 +1200,13 @@ public class WNodeScreen extends Screen {
         graphics.pose().pushPose();
         graphics.pose().translate(0f, 0f, zAboveGraph);
         drawMenuPanel(graphics, px, py, SECTION_COLOR_PICKER_W, SECTION_COLOR_PICKER_H);
-        graphics.drawString(font, "Section color", px + 4, py + 4, 0xFF669966, false);
+        graphics.drawString(font, "Section color", px + 4, py + 4, ComputedEditorTheme.ACCENT_MUTED, false);
         int bodyTop = sectionPickerBodyTop(py);
         int preview = sectionColorPickerPackArgb();
         graphics.fill(px + 12, bodyTop, px + 50, bodyTop + 38, preview);
-        graphics.renderOutline(px + 12, bodyTop, 38, 38, 0xFFAAAAAA);
+        graphics.renderOutline(px + 12, bodyTop, 38, 38, ComputedEditorTheme.BORDER_HIGHLIGHT);
         String hex = String.format("#%02X%02X%02X  A %02X", sectionPickR, sectionPickG, sectionPickB, sectionPickA);
-        graphics.drawString(font, hex, px + 56, bodyTop + 12, 0xFFB0B8D0, false);
+        graphics.drawString(font, hex, px + 56, bodyTop + 12, ComputedEditorTheme.TEXT_SECONDARY, false);
 
         int slx = px + 12;
         int slw = SECTION_COLOR_PICKER_W - 24;
@@ -1070,8 +1214,8 @@ public class WNodeScreen extends Screen {
         int[] vals = {sectionPickR, sectionPickG, sectionPickB, sectionPickA};
         for (int c = 0; c < 4; c++) {
             int sy = bodyTop + 44 + c * 22;
-            graphics.drawString(font, labs[c], px + 12, sy, 0xFFCCD4EE, false);
-            graphics.fill(slx, sy + 10, slx + slw, sy + 18, 0xFF1A2030);
+            graphics.drawString(font, labs[c], px + 12, sy, ComputedEditorTheme.TEXT_PRIMARY, false);
+            graphics.fill(slx, sy + 10, slx + slw, sy + 18, ComputedEditorTheme.BACKGROUND_INPUT);
             int fw = (int) (slw * (vals[c] / 255.0));
             int fillCol = switch (c) {
                 case 0 -> 0xFFFF5555;
@@ -1082,19 +1226,25 @@ public class WNodeScreen extends Screen {
             if (fw > 0) {
                 graphics.fill(slx, sy + 10, slx + fw, sy + 18, fillCol);
             }
-            graphics.renderOutline(slx, sy + 10, slw, 8, 0xFF5A5A5A);
+            graphics.renderOutline(slx, sy + 10, slw, 8, ComputedEditorTheme.BORDER_DEFAULT);
         }
 
         int by = py + SECTION_COLOR_PICKER_H - 30;
-        graphics.fill(px + 10, by, px + 102, by + 14, 0xFF2A4060);
-        graphics.drawString(font, "OK", px + 44, by + 3, 0xFFE0E8FF, false);
-        graphics.fill(px + 112, by, px + 208, by + 14, 0xFF402830);
-        graphics.drawString(font, "Cancel", px + 138, by + 3, 0xFFE0E0E8, false);
-        graphics.drawString(font, "Reset theme default", px + 12, py + SECTION_COLOR_PICKER_H - 11, 0xFF8A9AB8, false);
+        ComputedEditorStyle.drawButton(graphics, px + 10, by, 92, 14, false, true);
+        graphics.drawString(font, "OK", px + 44, by + 3, ComputedEditorTheme.TEXT_HEADER, false);
+        ComputedEditorStyle.drawDangerButton(graphics, px + 112, by, 96, 14, false);
+        graphics.drawString(font, "Cancel", px + 138, by + 3, ComputedEditorTheme.TEXT_PRIMARY, false);
+        graphics.drawString(
+                font,
+                "Reset theme default",
+                px + 12,
+                py + SECTION_COLOR_PICKER_H - 11,
+                ComputedEditorTheme.TEXT_SECONDARY,
+                false);
         graphics.pose().popPose();
     }
 
-    /** Called from {@link dev.devce.websnodelib.api.elements.WItemPickSlot} when a node editor is open. */
+    /** Called from {@link dev.propulsionteam.computed.internal.node.api.elements.WItemPickSlot} when a node editor is open. */
     public static void requestItemPick(Consumer<ItemStack> onChosen) {
         if (activeItemPickHost == null || onChosen == null) {
             return;
@@ -1164,14 +1314,14 @@ public class WNodeScreen extends Screen {
         }
         graphics.pose().pushPose();
         graphics.pose().translate(0f, 0f, 5200f);
-        graphics.fill(0, 0, width, height, 0x88000000);
+        graphics.fill(0, 0, width, height, ComputedEditorTheme.BACKGROUND_MODAL_SCRIM);
         int px = itemPickerPanelX();
         int py = itemPickerPanelY();
         int ph = itemPickerPanelH();
         drawMenuPanel(graphics, px, py, ITEM_PICK_PANEL_W, ph);
-        graphics.drawString(font, "Pick item (frequency)", px + 6, py + 5, 0xFF669966, false);
+        graphics.drawString(font, "Pick item (frequency)", px + 6, py + 5, ComputedEditorTheme.ACCENT_MUTED, false);
         int lineY = py + menuHeaderHeight();
-        graphics.drawString(font, "> " + itemPickerQuery + "_", px + 6, lineY, 0xFF00FF88, false);
+        graphics.drawString(font, "> " + itemPickerQuery + "_", px + 6, lineY, ComputedEditorTheme.ACCENT, false);
         int listTop = lineY + 14;
         int listH = ITEM_PICK_VISIBLE_ROWS * ITEM_PICK_ROW_H;
         int itemListRight = px + ITEM_PICK_PANEL_W - 2 - SCROLLER_TRACK_W;
@@ -1190,7 +1340,8 @@ public class WNodeScreen extends Screen {
                             && mouseY >= ry
                             && mouseY < ry + ITEM_PICK_ROW_H;
             if (hr) {
-                graphics.fill(px + 2, ry, itemListRight, ry + ITEM_PICK_ROW_H - 1, 0x4400FF88);
+                ComputedEditorStyle.drawMenuRow(
+                        graphics, px + 1, ry, itemListRight - px - 1, ITEM_PICK_ROW_H - 1, true, false);
             }
             graphics.renderItem(st, px + 6, ry + 2);
             String nm = st.getHoverName().getString();
@@ -1202,7 +1353,7 @@ public class WNodeScreen extends Screen {
                 }
                 nm = nm + ell;
             }
-            graphics.drawString(font, nm, px + 28, ry + 6, 0xFFD0D8EE, false);
+            graphics.drawString(font, nm, px + 28, ry + 6, ComputedEditorTheme.TEXT_PRIMARY, false);
         }
         graphics.disableScissor();
         drawInsetVerticalScroller(
@@ -1214,7 +1365,13 @@ public class WNodeScreen extends Screen {
                 itemPickCandidates.size(),
                 ITEM_PICK_VISIBLE_ROWS);
         int footY = listTop + ITEM_PICK_VISIBLE_ROWS * ITEM_PICK_ROW_H + 2;
-        graphics.drawString(font, "Esc: cancel   Enter: top match", px + 6, footY, 0xFF888888, false);
+        graphics.drawString(
+                font,
+                "Esc: cancel   Enter: top match",
+                px + 6,
+                footY,
+                ComputedEditorTheme.TEXT_SECONDARY,
+                false);
         graphics.pose().popPose();
     }
 
@@ -1690,10 +1847,10 @@ public class WNodeScreen extends Screen {
         if (editorFirstInit) {
             editorFirstInit = false;
             screenAnimation = 0;
-            undoStack.clear();
-            redoStack.clear();
+            editorHistory.discardCommands();
         }
         graph.updateTopology();
+        invalidateEditorInfrastructure();
     }
 
     @Override
@@ -1707,62 +1864,125 @@ public class WNodeScreen extends Screen {
         }
     }
 
+    /**
+     * Snapshot-backed command used while the legacy mutable editor is incrementally moved to
+     * operation-specific commands. Its post-edit state is captured lazily on first undo.
+     */
+    private static final class GraphSnapshotCommand implements EditorCommand<WNodeScreen> {
+        private final CompoundTag before;
+        private CompoundTag after;
+
+        private GraphSnapshotCommand(CompoundTag before) {
+            this.before = before.copy();
+        }
+
+        @Override
+        public void execute(WNodeScreen screen) {
+            // The existing editor performs the mutation immediately after recording its checkpoint.
+        }
+
+        @Override
+        public void undo(WNodeScreen screen) {
+            if (after == null) {
+                after = screen.graph.save().copy();
+            }
+            screen.restoreHistorySnapshot(before);
+        }
+
+        @Override
+        public void redo(WNodeScreen screen) {
+            if (after == null) {
+                throw new IllegalStateException("Cannot redo a graph snapshot before it has been undone");
+            }
+            screen.restoreHistorySnapshot(after);
+        }
+
+        @Override
+        public String description() {
+            return "Graph edit";
+        }
+    }
+
     /** Call immediately before a user edit that should be reversible. */
     private void recordCheckpointBeforeEdit() {
         if (historySuspended) {
             return;
         }
-        undoStack.addLast(graph.save().copy());
-        while (undoStack.size() > MAX_UNDO) {
-            undoStack.removeFirst();
-        }
-        redoStack.clear();
+        editorRevision++;
+        editorHistory.execute(new GraphSnapshotCommand(graph.save()));
+        invalidateEditorInfrastructure();
     }
 
     private void undo() {
-        if (undoStack.isEmpty()) {
+        if (!editorHistory.canUndo()) {
             return;
         }
         historySuspended = true;
         try {
-            redoStack.addLast(graph.save().copy());
-            graph.load(undoStack.removeLast());
-            selectedNode = null;
-            draggingNode = null;
-            linkingNode = null;
-            linkingPin = -1;
-            clearPendingWireSpawn();
-            isSearching = false;
-            searchQuery = "";
-            menuFlyoutPath.clear();
-            clearStickyBrowseRoot();
-            closeItemPicker();
+            if (editorHistory.undo()) {
+                editorRevision++;
+            }
         } finally {
             historySuspended = false;
         }
     }
 
     private void redo() {
-        if (redoStack.isEmpty()) {
+        if (!editorHistory.canRedo()) {
             return;
         }
         historySuspended = true;
         try {
-            undoStack.addLast(graph.save().copy());
-            graph.load(redoStack.removeLast());
-            selectedNode = null;
-            draggingNode = null;
-            linkingNode = null;
-            linkingPin = -1;
-            clearPendingWireSpawn();
-            isSearching = false;
-            searchQuery = "";
-            menuFlyoutPath.clear();
-            clearStickyBrowseRoot();
-            closeItemPicker();
+            if (editorHistory.redo()) {
+                editorRevision++;
+            }
         } finally {
             historySuspended = false;
         }
+    }
+
+    private void restoreHistorySnapshot(CompoundTag snapshot) {
+        graph.load(snapshot.copy());
+        selectedNode = null;
+        draggingNode = null;
+        linkingNode = null;
+        linkingPin = -1;
+        clearPendingWireSpawn();
+        isSearching = false;
+        searchQuery = "";
+        menuFlyoutPath.clear();
+        clearStickyBrowseRoot();
+        closeItemPicker();
+        invalidateEditorInfrastructure();
+    }
+
+    /** Current local edit generation; zero means the graph has not been edited since opening. */
+    protected final long editorRevision() {
+        return editorRevision;
+    }
+
+    /** State revision used by history-aware autosave and UI dirty indicators. */
+    protected final long editorHistoryRevision() {
+        return editorHistory.currentRevision();
+    }
+
+    protected final boolean editorHistoryDirty() {
+        return editorHistory.isDirty();
+    }
+
+    /** Marks the current history state saved only when the acknowledgement is not stale. */
+    protected final void acknowledgeEditorHistorySaved(long acknowledgedEditGeneration) {
+        if (acknowledgedEditGeneration == editorRevision) {
+            editorHistory.markSaved();
+        }
+    }
+
+    protected final void setEditorSaveFailureDiagnostic(String message) {
+        diagnosticsController.setSaveFailure(message);
+    }
+
+    protected final void clearEditorSaveFailureDiagnostic() {
+        diagnosticsController.clearSaveFailure();
     }
 
     /**
@@ -1860,15 +2080,19 @@ public class WNodeScreen extends Screen {
                 cameraFocusActive = false;
             }
         }
-        wirePulseScroll += deltaTime * PULSE_SCROLL_SPEED;
-        if (wirePulseScroll > 8192f) {
-            wirePulseScroll -= 8192f;
+        updateEditorDetailLevel();
+        EditorDetailLevel detailLevel = effectiveDetailLevel();
+        if (detailLevel == EditorDetailLevel.FULL) {
+            wireController.advanceAnimation(deltaTime);
         }
+        nodeLodRenderer.beginFrame();
+        showLodInteractionHint = false;
 
         screenAnimation = Math.min(1.0f, screenAnimation + deltaTime / OPEN_DURATION_SEC);
         float ease = easeOutCubic(screenAnimation);
         this.mouseX = mouseX;
         this.mouseY = mouseY;
+        refreshEditorDiagnostics();
 
         int dimAlpha = (int) (160 * ease);
         graphics.fill(0, 0, width, height, (dimAlpha << 24));
@@ -1878,9 +2102,17 @@ public class WNodeScreen extends Screen {
         int py1 = inset;
         int px2 = width - inset;
         int py2 = height - inset;
-        int panelBg = ((int) (230 * ease) << 24) | 0x121212;
-        graphics.fill(px1, py1, px2, py2, panelBg);
-        graphics.renderOutline(px1, py1, px2 - px1, py2 - py1, 0xFF555555);
+        int panelBg = ((int) (230 * ease) << 24)
+                | (ComputedEditorTheme.BACKGROUND_PRIMARY & 0x00FFFFFF);
+        ComputedEditorStyle.drawBeveledPanel(
+                graphics,
+                px1,
+                py1,
+                px2 - px1,
+                py2 - py1,
+                panelBg,
+                ComputedEditorTheme.BORDER_MENU,
+                ComputedEditorTheme.BORDER_INNER);
         if (isEditingNestedFunction()) {
             String fnTitle = "Function";
             if (functionStore != null && !functionEditStack.isEmpty()) {
@@ -1898,10 +2130,10 @@ public class WNodeScreen extends Screen {
             int textY = rowTop + (keyDraw - font.lineHeight) / 2 + 1;
             int totalW = font.width(lead) + keyDraw + gap + font.width(tail);
             int startX = px1 + (px2 - px1 - totalW) / 2;
-            graphics.drawString(font, lead, startX, textY, 0xFF66CCAA, false);
+            graphics.drawString(font, lead, startX, textY, ComputedEditorTheme.ACCENT_MUTED, false);
             int ix = startX + font.width(lead);
             blitScaledHintTile(graphics, KEY_CAP_ESC, ix, rowTop, keyDraw);
-            graphics.drawString(font, tail, ix + keyDraw + gap, textY, 0xFF66CCAA, false);
+            graphics.drawString(font, tail, ix + keyDraw + gap, textY, ComputedEditorTheme.ACCENT_MUTED, false);
         }
 
         for (int i = py1; i < py2; i += 2) {
@@ -1927,14 +2159,14 @@ public class WNodeScreen extends Screen {
             graphics.fill(s.getX(), s.getY(), s.getX() + s.getWidth(), s.getY() + s.getHeight(), bg);
             int head = sectionHeaderArgb(s, renaming, secSel);
             graphics.fill(s.getX(), s.getY(), s.getX() + s.getWidth(), s.getY() + 16, head);
-            int outline = secSel ? 0xFF66CCAA : 0xFF448866;
+            int outline = secSel ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.ACCENT_DARK;
             graphics.renderOutline(s.getX(), s.getY(), s.getWidth(), s.getHeight(), outline);
             int lx = s.getX() + 4;
             int ly = s.getY() + 4;
             if (renaming) {
                 drawSectionRenameTextWithSelectionAndCaret(graphics, lx, ly, s.getX() + s.getWidth() - 4);
             } else {
-                graphics.drawString(font, s.getName(), lx, ly, 0xFFCCEEDD, false);
+                graphics.drawString(font, s.getName(), lx, ly, ComputedEditorTheme.TEXT_PRIMARY, false);
             }
             if (s.getId().equals(selectedSectionId)) {
                 drawSectionResizeHandles(graphics, s);
@@ -1943,47 +2175,75 @@ public class WNodeScreen extends Screen {
 
         int gmx = screenToGraphX(mouseX);
         int gmy = screenToGraphY(mouseY);
-        if (!isSearching
+        if (detailLevel == EditorDetailLevel.FULL
+                && !isSearching
                 && linkingNode == null
                 && draggingWireConnIdx < 0
                 && !isCreatingSection
                 && isInsideEditorPanel(mouseX, mouseY)) {
             updateWireInteractionHover(gmx, gmy);
         } else {
-            clearWireHover();
-            invalidateHoverCache();
+            wireController.clearHover();
+            wireController.invalidateHoverCache();
         }
-        int wi = 0;
-        for (WConnection conn : graph.getConnections()) {
-            drawConnection(graphics, conn, wi++);
-        }
+        GraphRect wireViewport = graphViewport(
+                px1, py1, px2, py2, 36.0 / Math.max(0.1f, editorContentScale()));
+        wireController.render(
+                graphics,
+                graph,
+                wireViewport,
+                editorContentScale(),
+                editorRevision,
+                wireGeometryMoving(),
+                detailLevel);
 
         if (linkingNode != null) {
             int sx = linkingNode.getX() + linkingNode.getWidth();
             int sy = linkingNode.getY() + 18 + linkingPin * 12;
             int tx = screenToGraphX(mouseX);
             int ty = screenToGraphY(mouseY);
-            drawSmoothCurve(graphics, sx, sy, tx, ty, 0xAAFFFFFF, 1.5f);
+            wireController.renderCurve(graphics, sx, sy, tx, ty, 0xAAFFFFFF, 1.5f);
         } else if (pendingWireFromNode != null && isSearching && pendingWireDragFrozen) {
             int sx = pendingWireFromNode.getX() + pendingWireFromNode.getWidth();
             int sy = pendingWireFromNode.getY() + 18 + pendingWireFromOutputPin * 12;
-            drawSmoothCurve(graphics, sx, sy, pendingWireFrozenTx, pendingWireFrozenTy, 0xAAFFFFFF, 1.5f);
+            wireController.renderCurve(
+                    graphics, sx, sy, pendingWireFrozenTx, pendingWireFrozenTy, 0xAAFFFFFF, 1.5f);
         }
 
-        List<WNode> drawNodes = new ArrayList<>(graph.getNodes());
+        List<WNode> drawNodes = visibleNodes(px1, py1, px2, py2);
         sortNodesForDrawOrder(drawNodes);
         int z = 0;
         for (WNode node : drawNodes) {
             graphics.pose().pushPose();
             graphics.pose().translate(0, 0, z++ * 10);
-            node.render(graphics, screenToGraphX(mouseX), screenToGraphY(mouseY), partialTick);
-            if (node instanceof FunctionCardNode fc) {
-                if (innerGraphHasLockedPeripheral(fc.getInnerGraph())) {
+            if (detailLevel == EditorDetailLevel.FULL) {
+                node.render(graphics, screenToGraphX(mouseX), screenToGraphY(mouseY), partialTick);
+                if (node instanceof FunctionCardNode fc) {
+                    if (innerGraphHasLockedPeripheral(fc.getInnerGraph())) {
+                        drawEditorPeripheralLockOverlay(graphics, node);
+                    }
+                } else if (isEditorPeripheralLocked(node.getTypeId())) {
                     drawEditorPeripheralLockOverlay(graphics, node);
                 }
-            } else if (isEditorPeripheralLocked(node.getTypeId())) {
-                drawEditorPeripheralLockOverlay(graphics, node);
+                renderNodeDiagnosticOutline(graphics, node);
+            } else {
+                node.ensureLayoutUpToDate();
+                NodeLodRenderer.VisualState visualState = nodeLodVisualState(node, gmx, gmy);
+                showLodInteractionHint |= visualState.hovered();
+                nodeLodRenderer.renderNode(
+                        graphics,
+                        font,
+                        node,
+                        visualState,
+                        detailLevel,
+                        editorContentScale(),
+                        Mth.floor(graphToScreenX(node.getX())),
+                        Mth.floor(graphToScreenY(node.getY())),
+                        Mth.ceil(graphToScreenX(node.getX() + node.getWidth())),
+                        Mth.ceil(graphToScreenY(node.getY() + node.getHeight())),
+                        z);
             }
+            updateIndexedNode(node);
             graphics.pose().popPose();
         }
 
@@ -2010,9 +2270,20 @@ public class WNodeScreen extends Screen {
             graphics.pose().popPose();
         }
 
-        renderParticles(graphics, deltaTime);
+        if (detailLevel == EditorDetailLevel.FULL) {
+            renderParticles(graphics, deltaTime);
+        }
 
         graphics.pose().popPose();
+
+        if (detailLevel != EditorDetailLevel.FULL) {
+            graphics.pose().pushPose();
+            // Node bodies receive an increasing graph-space Z value for deterministic overlap.
+            // The screen-space label pass must sit above the highest visible body, not reset to Z=0.
+            graphics.pose().translate(0, 0, Math.max(3000, z * 10 + 100));
+            nodeLodRenderer.renderLabels(graphics);
+            graphics.pose().popPose();
+        }
 
         graphics.disableScissor();
 
@@ -2020,11 +2291,13 @@ public class WNodeScreen extends Screen {
         graphics.pose().translate(0, 0, 2500);
 
         renderNodeActionDock(graphics, mouseX, mouseY, ease);
+        renderLodInteractionHint(graphics, detailLevel);
 
         renderCenterViewButton(graphics, mouseX, mouseY, ease);
         renderSectionsSidebar(graphics, mouseX, mouseY, ease);
         renderSchematicToolbar(graphics, mouseX, mouseY, ease);
         renderShareToolbar(graphics, mouseX, mouseY, ease);
+        renderDiagnosticsPanel(graphics, mouseX, mouseY, ease);
 
         if (isSearching) {
             rebuildSearchHitRows();
@@ -2057,27 +2330,179 @@ public class WNodeScreen extends Screen {
         }
     }
 
+    private static final int DIAGNOSTICS_INDICATOR_W = 128;
+    private static final int DIAGNOSTICS_INDICATOR_H = 22;
+    private static final int DIAGNOSTICS_MAX_ROWS = 6;
+
+    private int diagnosticsIndicatorX() {
+        return viewInset() + FULLSCREEN_BTN_PAD;
+    }
+
+    private int diagnosticsIndicatorY() {
+        return height - viewInset() - DIAGNOSTICS_INDICATOR_H - FULLSCREEN_BTN_PAD;
+    }
+
+    private boolean diagnosticsIndicatorContains(double mouseX, double mouseY) {
+        if (diagnosticsController.diagnostics().isEmpty()) {
+            return false;
+        }
+        int x = diagnosticsIndicatorX();
+        int y = diagnosticsIndicatorY();
+        return mouseX >= x
+                && mouseX < x + DIAGNOSTICS_INDICATOR_W
+                && mouseY >= y
+                && mouseY < y + DIAGNOSTICS_INDICATOR_H;
+    }
+
+    private MenuRect diagnosticsPanelBounds() {
+        int width = Math.min(380, Math.max(120, this.width - viewInset() * 2 - FULLSCREEN_BTN_PAD * 2));
+        int rows = Math.min(DIAGNOSTICS_MAX_ROWS, diagnosticsController.diagnostics().size());
+        int height = 18 + rows * 14;
+        int x = diagnosticsIndicatorX();
+        int y = Math.max(viewInset() + 4, diagnosticsIndicatorY() - height - 4);
+        return new MenuRect(x, y, width, height);
+    }
+
+    private boolean diagnosticsPanelContains(double mouseX, double mouseY) {
+        if (!diagnosticsPanelOpen || diagnosticsController.diagnostics().isEmpty()) {
+            return false;
+        }
+        return diagnosticsPanelBounds().contains((int) mouseX, (int) mouseY);
+    }
+
+    private void renderDiagnosticsPanel(GuiGraphics graphics, int mouseX, int mouseY, float ease) {
+        if (diagnosticsController.diagnostics().isEmpty()) {
+            return;
+        }
+        int x = diagnosticsIndicatorX();
+        int y = diagnosticsIndicatorY();
+        boolean hovered = diagnosticsIndicatorContains(mouseX, mouseY);
+        int accent = diagnosticsController.diagnostics().hasErrors() ? 0xFFFF6B6B : 0xFFFFC766;
+        int fill = ((int) (220 * ease) << 24) | (hovered ? 0x3A2A2A : 0x241C1C);
+        graphics.fill(x, y, x + DIAGNOSTICS_INDICATOR_W, y + DIAGNOSTICS_INDICATOR_H, fill);
+        graphics.renderOutline(x, y, DIAGNOSTICS_INDICATOR_W, DIAGNOSTICS_INDICATOR_H, accent);
+        String label = "! Diagnostics: " + diagnosticsController.diagnostics().size();
+        graphics.drawString(
+                font,
+                label,
+                x + 7,
+                y + (DIAGNOSTICS_INDICATOR_H - font.lineHeight) / 2 + 1,
+                accent,
+                false);
+
+        if (!diagnosticsPanelOpen) {
+            return;
+        }
+        MenuRect panel = diagnosticsPanelBounds();
+        ComputedEditorStyle.drawMenuPanel(graphics, panel.x(), panel.y(), panel.w(), panel.h());
+        graphics.drawString(
+                font,
+                "Graph diagnostics",
+                panel.x() + 6,
+                panel.y() + 5,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
+        int rowY = panel.y() + 18;
+        int shown = Math.min(DIAGNOSTICS_MAX_ROWS, diagnosticsController.diagnostics().size());
+        for (int index = 0; index < shown; index++) {
+            EditorDiagnostic diagnostic = diagnosticsController.diagnostics().all().get(index);
+            int color = diagnostic.severity() == EditorDiagnostic.Severity.ERROR
+                    ? ComputedEditorTheme.STATUS_ERROR_TEXT
+                    : ComputedEditorTheme.STATUS_WARNING_TEXT;
+            String target = diagnostic.target().kind() == DiagnosticTarget.Kind.EDITOR
+                    ? "editor"
+                    : diagnostic.target().kind().name().toLowerCase(java.util.Locale.ROOT)
+                            + " "
+                            + abbreviateDiagnosticKey(diagnostic.target().key());
+            String line = "[" + target + "] " + diagnostic.message();
+            line = font.plainSubstrByWidth(line, panel.w() - 14);
+            graphics.drawString(font, line, panel.x() + 7, rowY + 2, color, false);
+            rowY += 14;
+        }
+    }
+
+    private static String abbreviateDiagnosticKey(String key) {
+        return key.length() <= 8 ? key : key.substring(0, 8);
+    }
+
+    private void renderNodeDiagnosticOutline(GuiGraphics graphics, WNode node) {
+        List<EditorDiagnostic> diagnostics =
+                diagnosticsController.diagnostics().forTarget(DiagnosticTarget.node(node.getId()));
+        if (diagnostics.isEmpty()) {
+            return;
+        }
+        boolean error = diagnostics.stream()
+                .anyMatch(diagnostic -> diagnostic.severity() == EditorDiagnostic.Severity.ERROR);
+        int color = error ? ComputedEditorTheme.STATUS_ERROR : ComputedEditorTheme.STATUS_WARNING;
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 8);
+        graphics.renderOutline(
+                node.getX() - 2, node.getY() - 2, node.getWidth() + 4, node.getHeight() + 4, color);
+        graphics.pose().popPose();
+    }
+
+    private NodeLodRenderer.VisualState nodeLodVisualState(WNode node, int graphMouseX, int graphMouseY) {
+        List<EditorDiagnostic> diagnostics =
+                diagnosticsController.diagnostics().forTarget(DiagnosticTarget.node(node.getId()));
+        boolean error = diagnostics.stream()
+                .anyMatch(diagnostic -> diagnostic.severity() == EditorDiagnostic.Severity.ERROR);
+        boolean warning = !error && !diagnostics.isEmpty();
+        boolean locked = node instanceof FunctionCardNode fc
+                ? innerGraphHasLockedPeripheral(fc.getInnerGraph())
+                : isEditorPeripheralLocked(node.getTypeId());
+        boolean hovered = graphMouseX >= node.getX()
+                && graphMouseX <= node.getX() + node.getWidth()
+                && graphMouseY >= node.getY()
+                && graphMouseY <= node.getY() + node.getHeight();
+        return new NodeLodRenderer.VisualState(hovered, node.isSelected(), error, warning, locked);
+    }
+
+    private void renderLodInteractionHint(GuiGraphics graphics, EditorDetailLevel detailLevel) {
+        if (detailLevel == EditorDetailLevel.FULL || !showLodInteractionHint) {
+            return;
+        }
+        String text = Component.translatable("gui.computed.lod.zoom_in").getString();
+        int textWidth = font.width(text);
+        int x = Mth.clamp(this.mouseX + 12, viewInset() + 4, width - viewInset() - textWidth - 10);
+        int y = Mth.clamp(this.mouseY + 12, viewInset() + 4, height - viewInset() - font.lineHeight - 8);
+        ComputedEditorStyle.drawMenuPanel(
+                graphics, x - 4, y - 3, textWidth + 8, font.lineHeight + 6);
+        graphics.drawString(font, text, x, y, ComputedEditorTheme.TEXT_PRIMARY, false);
+    }
+
     private void renderNewFunctionNamingOverlay(GuiGraphics graphics) {
         if (!newFunctionNamingOpen || functionStore == null) {
             return;
         }
-        graphics.fill(0, 0, width, height, 0x88000000);
+        graphics.fill(0, 0, width, height, ComputedEditorTheme.BACKGROUND_MODAL_SCRIM);
         int boxW = 300;
         int boxH = 76;
         int bx = width / 2 - boxW / 2;
         int by = height / 3;
         drawMenuPanel(graphics, bx, by, boxW, boxH);
-        graphics.drawString(font, "Name new function", bx + 8, by + 8, 0xFF669966, false);
+        graphics.drawString(font, "Name new function", bx + 8, by + 8, ComputedEditorTheme.ACCENT_MUTED, false);
         String show = newFunctionNameBuffer.isEmpty() ? "_" : newFunctionNameBuffer + "_";
-        graphics.drawString(font, show, bx + 8, by + 30, 0xFFEAF0FF, false);
-        graphics.drawString(font, "Enter: create   Esc: cancel", bx + 8, by + boxH - 18, 0xFF888888, false);
+        graphics.drawString(font, show, bx + 8, by + 30, ComputedEditorTheme.TEXT_HEADER, false);
+        graphics.drawString(
+                font,
+                "Enter: create   Esc: cancel",
+                bx + 8,
+                by + boxH - 18,
+                ComputedEditorTheme.TEXT_SECONDARY,
+                false);
     }
 
     private void renderSectionsSidebar(GuiGraphics graphics, int mx, int my, float ease) {
         int tx = sectionsToggleX();
         int ty = sectionsToggleY();
-        graphics.fill(tx, ty, tx + FULLSCREEN_BTN, ty + FULLSCREEN_BTN, ((int) (200 * ease) << 24) | 0x2a2a2a);
-        graphics.renderOutline(tx, ty, FULLSCREEN_BTN, FULLSCREEN_BTN, 0xFF777777);
+        ComputedEditorStyle.drawButton(
+                graphics,
+                tx,
+                ty,
+                FULLSCREEN_BTN,
+                FULLSCREEN_BTN,
+                mouseX >= tx && mouseX < tx + FULLSCREEN_BTN && mouseY >= ty && mouseY < ty + FULLSCREEN_BTN,
+                showSectionsSidebar);
         ResourceLocation sidebarIcon = showSectionsSidebar ? ICON_SIDEBAR_OPEN : ICON_SIDEBAR_CLOSED;
         int six = tx + (FULLSCREEN_BTN - ICON_SIZE) / 2;
         int siy = ty + (FULLSCREEN_BTN - ICON_SIZE) / 2;
@@ -2090,9 +2515,8 @@ public class WNodeScreen extends Screen {
         int y = sectionsSidebarY();
         int w = sectionsSidebarW();
         int h = sectionsSidebarH();
-        graphics.fill(x, y, x + w, y + h, ((int) (220 * ease) << 24) | 0x121814);
-        graphics.renderOutline(x, y, w, h, 0xFF3D8B6A);
-        graphics.drawString(font, "Sections", x + 6, y + 4, 0xFFAAE8C8, false);
+        ComputedEditorStyle.drawBeveledPanel(graphics, x, y, w, h);
+        graphics.drawString(font, "Sections", x + 6, y + 4, ComputedEditorTheme.ACCENT_MUTED, false);
         int ry = y + 18;
         for (WGraph.WSection s : sectionsSortedByLayer(graph.getSections())) {
             if (ry + 14 > y + h - 4) {
@@ -2101,15 +2525,15 @@ public class WNodeScreen extends Screen {
             boolean renaming = s.getId().equals(renamingSectionId);
             boolean selected = s.getId().equals(selectedSectionId);
             if (renaming) {
-                graphics.fill(x + 2, ry - 1, x + w - 2, ry + 12, 0xEE081A12);
+                ComputedEditorStyle.drawMenuRow(graphics, x, ry - 1, w, 13, false, true);
             } else if (selected) {
-                graphics.fill(x + 2, ry - 1, x + w - 2, ry + 12, 0x552A6644);
+                ComputedEditorStyle.drawMenuRow(graphics, x, ry - 1, w, 13, false, true);
             }
             int lx = x + 6;
             if (renaming) {
                 drawSectionRenameTextWithSelectionAndCaret(graphics, lx, ry, x + w - 6);
             } else {
-                int textColor = selected ? 0xFFE8FFF4 : 0xFF9AB8A8;
+                int textColor = selected ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_SECONDARY;
                 graphics.drawString(font, s.getName(), lx, ry, textColor, false);
             }
             ry += 13;
@@ -2120,13 +2544,11 @@ public class WNodeScreen extends Screen {
         int x = centerViewBtnX();
         int y = centerViewBtnY();
         boolean hov = centerViewBtnContains(mx, my);
-        int fill = hov ? 0x3A3A3A : 0x2A2A2A;
-        graphics.fill(x, y, x + CENTER_BTN_W, y + CENTER_BTN_H, ((int) (200 * ease) << 24) | fill);
-        graphics.renderOutline(x, y, CENTER_BTN_W, CENTER_BTN_H, ((int) (255 * ease) << 24) | 0x777777);
+        ComputedEditorStyle.drawButton(graphics, x, y, CENTER_BTN_W, CENTER_BTN_H, hov, false);
         String label = "Center View";
         int tx = x + (CENTER_BTN_W - font.width(label)) / 2;
         int ty = y + (CENTER_BTN_H - font.lineHeight) / 2 + 1;
-        graphics.drawString(font, label, tx, ty, 0xFFE8F0FF, false);
+        graphics.drawString(font, label, tx, ty, ComputedEditorTheme.TEXT_PRIMARY, false);
     }
 
     private int schematicBtnX() {
@@ -2415,10 +2837,9 @@ public class WNodeScreen extends Screen {
         Path file = functionDiscImportFiles.get(idx);
         try {
             CompoundTag tag = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
-            if (!tag.contains("nodes", Tag.TAG_LIST)) {
-                playUiClick(0.85f);
-                return;
-            }
+            CompoundTag importedGraph = tag.contains("nodes", Tag.TAG_LIST)
+                    ? tag.copy()
+                    : ProgramBridge.decode(tag).graph().save();
             String base = file.getFileName().toString();
             if (base.endsWith(".nbt")) {
                 base = base.substring(0, base.length() - 4);
@@ -2427,9 +2848,9 @@ public class WNodeScreen extends Screen {
                 base = "imported";
             }
             recordCheckpointBeforeEdit();
-            functionStore.addNew(base, tag.copy());
+            functionStore.addNew(base, importedGraph);
             playUiClick(1.08f);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             playUiClick(0.85f);
         }
     }
@@ -2452,7 +2873,7 @@ public class WNodeScreen extends Screen {
         int vis = FUNCTION_LIB_VISIBLE_ROWS;
         int contentTop = fy + 6;
         if (nf == 0) {
-            graphics.drawString(font, "(no .nbt)", fx + 6, contentTop + 2, 0xFF666666, false);
+            graphics.drawString(font, "(no .nbt)", fx + 6, contentTop + 2, ComputedEditorTheme.TEXT_TERTIARY, false);
             return;
         }
         int footerGap = nf > vis ? 12 : 0;
@@ -2465,7 +2886,8 @@ public class WNodeScreen extends Screen {
             int rowY = contentTop + j * rowH;
             boolean hr = mx >= fx && mx < fx + fw && my >= rowY && my < rowY + rowH;
             if (hr) {
-                graphics.fill(fx + 1, rowY, flyListRight, rowY + rowH, 0x4400FF88);
+                ComputedEditorStyle.drawMenuRow(
+                        graphics, fx, rowY, flyListRight - fx, rowH, true, false);
             }
             String name = fp.getFileName().toString();
             int mw = flyListRight - fx - 10;
@@ -2475,7 +2897,7 @@ public class WNodeScreen extends Screen {
                 }
                 name = name + "…";
             }
-            graphics.drawString(font, name, fx + 6, rowY + 1, 0xFFEAF0FF, false);
+            graphics.drawString(font, name, fx + 6, rowY + 1, ComputedEditorTheme.TEXT_PRIMARY, false);
         }
         graphics.disableScissor();
         drawInsetVerticalScroller(
@@ -2490,7 +2912,7 @@ public class WNodeScreen extends Screen {
             int from = functionDiscImportListScroll + 1;
             int to = functionDiscImportListScroll + show;
             String footer = from + "–" + to + " / " + nf;
-            graphics.drawString(font, footer, fx + 6, fy + fh - 11, 0xFF778899, false);
+            graphics.drawString(font, footer, fx + 6, fy + fh - 11, ComputedEditorTheme.TEXT_SECONDARY, false);
         }
     }
 
@@ -2501,9 +2923,7 @@ public class WNodeScreen extends Screen {
         int tx = schematicBtnX();
         int ty = schematicBtnY();
         boolean hov = schematicBtnContains(mx, my);
-        int alphaBg = (int) (200 * ease);
-        graphics.fill(tx, ty, tx + FULLSCREEN_BTN, ty + FULLSCREEN_BTN, (alphaBg << 24) | (hov ? 0x3a3a3a : 0x2a2a2a));
-        graphics.renderOutline(tx, ty, FULLSCREEN_BTN, FULLSCREEN_BTN, ((int) (255 * ease) << 24) | 0x777777);
+        ComputedEditorStyle.drawButton(graphics, tx, ty, FULLSCREEN_BTN, FULLSCREEN_BTN, hov, functionPickerOpen);
         int six = tx + (FULLSCREEN_BTN - ICON_SIZE) / 2;
         int siy = ty + (FULLSCREEN_BTN - ICON_SIZE) / 2;
         graphics.blit(ICON_SCHEMATIC, six, siy, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
@@ -2516,7 +2936,12 @@ public class WNodeScreen extends Screen {
             drawMenuPanel(graphics, px, py, pw, ph);
             int rh = menuRowHeight();
             int placedH = functionPickerPlacedSectionHeight();
-            graphics.fill(px + 2, py + 2, px + pw - 2, py + 6 + placedH + FUNCTION_LIB_TITLE_H, 0x33101822);
+            graphics.fill(
+                    px + 2,
+                    py + 2,
+                    px + pw - 2,
+                    py + 6 + placedH + FUNCTION_LIB_TITLE_H,
+                    ComputedEditorTheme.BACKGROUND_SECTION);
             int contentY = py + 6;
             List<Component> placedLines = placedPeripheralHudLines();
             if (!placedLines.isEmpty()) {
@@ -2525,21 +2950,21 @@ public class WNodeScreen extends Screen {
                         Component.translatable("gui.computed.placed_hardware_title"),
                         px + 6,
                         contentY,
-                        0xFF88DDAA,
+                        ComputedEditorTheme.ACCENT_MUTED,
                         false);
                 contentY += FUNCTION_LIB_TITLE_H;
                 for (Component line : placedLines) {
-                    graphics.drawString(font, line, px + 8, contentY, 0xFFC0D8C0, false);
+                    graphics.drawString(font, line, px + 8, contentY, ComputedEditorTheme.TEXT_PRIMARY, false);
                     contentY += font.lineHeight;
                 }
                 contentY += 4;
             }
-            graphics.drawString(font, "Functions", px + 6, contentY, 0xFFAACCEE, false);
+            graphics.drawString(font, "Functions", px + 6, contentY, ComputedEditorTheme.TEXT_HEADER, false);
             int ry = contentY + FUNCTION_LIB_TITLE_H;
             boolean hNew = mx >= px && mx < px + pw && my >= ry && my < ry + rh;
-            int newColor = hNew ? 0xFFFFFFFF : 0xFF888888;
+            int newColor = hNew ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_SECONDARY;
             if (hNew) {
-                graphics.fill(px + 1, ry, px + pw - 1, ry + rh, 0x4400FF88);
+                ComputedEditorStyle.drawMenuRow(graphics, px, ry, pw, rh, true, false);
             }
             graphics.drawString(font, "+ New function", px + 6, ry + 2, newColor, false);
             ry += rh;
@@ -2563,26 +2988,36 @@ public class WNodeScreen extends Screen {
                 boolean hr =
                         mx >= px && mx < px + pw && my >= rowY && my < rowY + FUNCTION_LIB_NAME_ROW_H;
                 if (renaming) {
-                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0xEE080E14);
+                    ComputedEditorStyle.drawMenuRow(
+                            graphics, px, rowY - 1, defsListRight - px, FUNCTION_LIB_NAME_ROW_H - 1, false, true);
                 } else if (selected) {
-                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x445C74CC);
+                    ComputedEditorStyle.drawMenuRow(
+                            graphics, px, rowY - 1, defsListRight - px, FUNCTION_LIB_NAME_ROW_H - 1, false, true);
                 } else if (hr && !hwLocked) {
-                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x3300AA66);
+                    ComputedEditorStyle.drawMenuRow(
+                            graphics, px, rowY - 1, defsListRight - px, FUNCTION_LIB_NAME_ROW_H - 1, true, false);
                 } else if (hwLocked) {
-                    graphics.fill(px + 2, rowY - 1, defsListRight, rowY + FUNCTION_LIB_NAME_ROW_H - 2, 0x88201818);
+                    graphics.fill(
+                            px + 2,
+                            rowY - 1,
+                            defsListRight,
+                            rowY + FUNCTION_LIB_NAME_ROW_H - 2,
+                            ComputedEditorTheme.DANGER_BACKGROUND);
                 }
                 int lx = px + 6;
                 if (renaming) {
                     drawLibraryFnRenameTextWithSelectionAndCaret(graphics, lx, rowY, defsTextMaxRight);
                 } else {
                     int tColor =
-                            hwLocked ? 0xFF886666 : (selected ? 0xFFFFFFFF : 0xFFAFB7D0);
+                            hwLocked
+                                    ? ComputedEditorTheme.STATUS_LOCKED_TEXT
+                                    : (selected ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_SECONDARY);
                     graphics.drawString(font, def.name(), lx, rowY, tColor, false);
                     if (hwLocked) {
                         String hint = Component.translatable("gui.computed.function_needs_peripheral").getString();
                         int hx = defsTextMaxRight - font.width(hint);
                         if (hx > lx + font.width(def.name()) + 4) {
-                            graphics.drawString(font, hint, hx, rowY, 0xFFFF6666, false);
+                            graphics.drawString(font, hint, hx, rowY, ComputedEditorTheme.STATUS_LOCKED, false);
                         }
                     }
                 }
@@ -2601,7 +3036,7 @@ public class WNodeScreen extends Screen {
             boolean hFolder =
                     mx >= px && mx < px + pw && my >= folderY && my < folderY + rh && clientNestedFunctionsDirectory() != null;
             if (hFolder) {
-                graphics.fill(px + 1, folderY, px + pw - 1, folderY + rh, 0x4400AAFF);
+                ComputedEditorStyle.drawMenuRow(graphics, px, folderY, pw, rh, true, false);
             }
             int ic = px + 8;
             int iy = folderY + (rh - ICON_SIZE) / 2;
@@ -2614,7 +3049,9 @@ public class WNodeScreen extends Screen {
                     "Open folder",
                     px + 8 + ICON_SIZE + 4,
                     folderY + (rh - font.lineHeight) / 2 + 1,
-                    clientNestedFunctionsDirectory() != null ? 0xFFCCCCCC : 0xFF555555,
+                    clientNestedFunctionsDirectory() != null
+                            ? ComputedEditorTheme.TEXT_PRIMARY
+                            : ComputedEditorTheme.TEXT_DISABLED,
                     false);
 
             int impY = functionPickerImportRowY(py);
@@ -2622,16 +3059,28 @@ public class WNodeScreen extends Screen {
             int nf = functionDiscImportFiles.size();
             boolean diskOk = clientNestedFunctionsDirectory() != null;
             if ((hImp || functionImportSubmenuOpen) && diskOk) {
-                graphics.fill(px + 1, impY, px + pw - 1, impY + rh, 0x4400FF88);
+                ComputedEditorStyle.drawMenuRow(graphics, px, impY, pw, rh, hImp, functionImportSubmenuOpen);
             }
-            graphics.drawString(font, "Import…", px + 6, impY + 2, diskOk ? 0xFF669966 : 0xFF445544, false);
+            graphics.drawString(
+                    font,
+                    "Import…",
+                    px + 6,
+                    impY + 2,
+                    diskOk ? ComputedEditorTheme.ACCENT_MUTED : ComputedEditorTheme.TEXT_DISABLED,
+                    false);
             String subHint =
                     !diskOk ? "(save path N/A)" : nf == 0 ? "(no .nbt)" : nf + " file" + (nf == 1 ? "" : "s");
-            int subColor = diskOk ? 0xFF888888 : 0xFF555555;
+            int subColor = diskOk ? ComputedEditorTheme.TEXT_SECONDARY : ComputedEditorTheme.TEXT_DISABLED;
             graphics.drawString(font, subHint, px + 56, impY + 2, subColor, false);
             String chevron = (!diskOk || nf == 0) ? "" : "›";
             if (!chevron.isEmpty()) {
-                graphics.drawString(font, chevron, px + pw - font.width(chevron) - 6, impY + 2, 0xFFAACCEE, false);
+                graphics.drawString(
+                        font,
+                        chevron,
+                        px + pw - font.width(chevron) - 6,
+                        impY + 2,
+                        ComputedEditorTheme.TEXT_SECONDARY,
+                        false);
             }
             drawFunctionLibraryFooterHints(graphics, px, py + ph - LIBRARY_HINT_BLOCK_H);
             renderFunctionImportFlyout(graphics, mx, my);
@@ -2643,17 +3092,14 @@ public class WNodeScreen extends Screen {
     }
 
     private void renderShareToolbar(GuiGraphics graphics, int mx, int my, float ease) {
-        int alphaBg = (int) (200 * ease);
         int ex = shareExportBtnX();
         int ey = shareExportBtnY();
         int ix = shareImportBtnX();
         int iy = shareImportBtnY();
         boolean hExport = shareExportBtnContains(mx, my);
         boolean hImport = shareImportBtnContains(mx, my);
-        graphics.fill(ex, ey, ex + FULLSCREEN_BTN, ey + FULLSCREEN_BTN, (alphaBg << 24) | (hExport ? 0x3a3a3a : 0x2a2a2a));
-        graphics.renderOutline(ex, ey, FULLSCREEN_BTN, FULLSCREEN_BTN, ((int) (255 * ease) << 24) | 0x777777);
-        graphics.fill(ix, iy, ix + FULLSCREEN_BTN, iy + FULLSCREEN_BTN, (alphaBg << 24) | (hImport ? 0x3a3a3a : 0x2a2a2a));
-        graphics.renderOutline(ix, iy, FULLSCREEN_BTN, FULLSCREEN_BTN, ((int) (255 * ease) << 24) | 0x777777);
+        ComputedEditorStyle.drawButton(graphics, ex, ey, FULLSCREEN_BTN, FULLSCREEN_BTN, hExport, false);
+        ComputedEditorStyle.drawButton(graphics, ix, iy, FULLSCREEN_BTN, FULLSCREEN_BTN, hImport, false);
         int exi = ex + (FULLSCREEN_BTN - ICON_SIZE) / 2;
         int eyi = ey + (FULLSCREEN_BTN - ICON_SIZE) / 2;
         int ixi = ix + (FULLSCREEN_BTN - ICON_SIZE) / 2;
@@ -2666,21 +3112,28 @@ public class WNodeScreen extends Screen {
         if (!importDialogOpen) {
             return;
         }
-        graphics.fill(0, 0, width, height, 0x88000000);
+        graphics.fill(0, 0, width, height, ComputedEditorTheme.BACKGROUND_MODAL_SCRIM);
         int boxW = Math.min(540, width - 40);
         int boxH = Math.min(220, height - 40);
         int bx = width / 2 - boxW / 2;
         int by = height / 2 - boxH / 2;
         drawMenuPanel(graphics, bx, by, boxW, boxH);
-        graphics.drawString(font, Component.translatable("gui.computed.share.import_title"), bx + 8, by + 8, 0xFFEAF0FF, false);
+        graphics.drawString(
+                font,
+                Component.translatable("gui.computed.share.import_title"),
+                bx + 8,
+                by + 8,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
         int tx1 = bx + 8;
         int ty1 = by + 24;
         int tx2 = bx + boxW - 8;
         int ty2 = by + boxH - 44;
-        graphics.fill(tx1, ty1, tx2, ty2, 0xFF000000);
-        graphics.renderOutline(tx1, ty1, tx2 - tx1, ty2 - ty1, 0xFF5A6A5A);
+        ComputedEditorStyle.drawField(graphics, tx1, ty1, tx2 - tx1, ty2 - ty1, true, false);
         String display = importDialogText.isEmpty() ? Component.translatable("gui.computed.share.import_placeholder").getString() : importDialogText;
-        int color = importDialogText.isEmpty() ? 0xFF667766 : 0xFFE8F0E8;
+        int color = importDialogText.isEmpty()
+                ? ComputedEditorTheme.TEXT_TERTIARY
+                : ComputedEditorTheme.TEXT_PRIMARY;
         graphics.enableScissor(tx1 + 2, ty1 + 2, tx2 - 2, ty2 - 2);
         int maxW = tx2 - tx1 - 8;
         List<net.minecraft.util.FormattedCharSequence> lines = font.split(Component.literal(display), maxW);
@@ -2700,12 +3153,24 @@ public class WNodeScreen extends Screen {
         int importX = bx + boxW - btnW * 2 - 16;
         int cancelX = bx + boxW - btnW - 8;
         int btnY = by + boxH - 30;
-        graphics.fill(importX, btnY, importX + btnW, btnY + btnH, 0xFF2A4A3A);
-        graphics.renderOutline(importX, btnY, btnW, btnH, 0xFF77AA88);
-        graphics.drawString(font, Component.translatable("gui.computed.share.import_button"), importX + 16, btnY + 6, 0xFFFFFFFF, false);
-        graphics.fill(cancelX, btnY, cancelX + btnW, btnY + btnH, 0xFF3A2A2A);
-        graphics.renderOutline(cancelX, btnY, btnW, btnH, 0xFFAA7777);
-        graphics.drawString(font, Component.translatable("gui.computed.share.cancel_button"), cancelX + 18, btnY + 6, 0xFFFFFFFF, false);
+        boolean importHovered = mouseX >= importX && mouseX < importX + btnW && mouseY >= btnY && mouseY < btnY + btnH;
+        boolean cancelHovered = mouseX >= cancelX && mouseX < cancelX + btnW && mouseY >= btnY && mouseY < btnY + btnH;
+        ComputedEditorStyle.drawButton(graphics, importX, btnY, btnW, btnH, importHovered, true);
+        graphics.drawString(
+                font,
+                Component.translatable("gui.computed.share.import_button"),
+                importX + 16,
+                btnY + 6,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
+        ComputedEditorStyle.drawDangerButton(graphics, cancelX, btnY, btnW, btnH, cancelHovered);
+        graphics.drawString(
+                font,
+                Component.translatable("gui.computed.share.cancel_button"),
+                cancelX + 18,
+                btnY + 6,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
 
         if (!importDialogStatus.isEmpty()) {
             graphics.drawString(
@@ -2713,7 +3178,7 @@ public class WNodeScreen extends Screen {
                     importDialogStatus,
                     bx + 8,
                     by + boxH - 28,
-                    importDialogStatusError ? 0xFFFF8888 : 0xFF88CC88,
+                    importDialogStatusError ? ComputedEditorTheme.STATUS_ERROR_TEXT : ComputedEditorTheme.ACCENT_MUTED,
                     false);
         }
     }
@@ -2722,26 +3187,31 @@ public class WNodeScreen extends Screen {
         if (!exportDialogOpen) {
             return;
         }
-        graphics.fill(0, 0, width, height, 0x88000000);
+        graphics.fill(0, 0, width, height, ComputedEditorTheme.BACKGROUND_MODAL_SCRIM);
         int boxW = Math.min(540, width - 40);
         int boxH = Math.min(220, height - 40);
         int bx = width / 2 - boxW / 2;
         int by = height / 2 - boxH / 2;
         drawMenuPanel(graphics, bx, by, boxW, boxH);
-        graphics.drawString(font, Component.translatable("gui.computed.share.export_title"), bx + 8, by + 8, 0xFFEAF0FF, false);
+        graphics.drawString(
+                font,
+                Component.translatable("gui.computed.share.export_title"),
+                bx + 8,
+                by + 8,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
         int tx1 = bx + 8;
         int ty1 = by + 24;
         int tx2 = bx + boxW - 8;
         int ty2 = by + boxH - 44;
-        graphics.fill(tx1, ty1, tx2, ty2, 0xFF000000);
-        graphics.renderOutline(tx1, ty1, tx2 - tx1, ty2 - ty1, 0xFF5A6A5A);
+        ComputedEditorStyle.drawField(graphics, tx1, ty1, tx2 - tx1, ty2 - ty1, false, false);
         graphics.enableScissor(tx1 + 2, ty1 + 2, tx2 - 2, ty2 - 2);
         int maxW = tx2 - tx1 - 8;
         List<net.minecraft.util.FormattedCharSequence> lines = font.split(Component.literal(exportDialogText), maxW);
         int y = ty1 + 4;
         int start = Math.max(0, lines.size() - Math.max(1, (ty2 - ty1 - 8) / font.lineHeight));
         for (int i = start; i < lines.size(); i++) {
-            graphics.drawString(font, lines.get(i), tx1 + 4, y, 0xFFE8F0E8, false);
+            graphics.drawString(font, lines.get(i), tx1 + 4, y, ComputedEditorTheme.TEXT_PRIMARY, false);
             y += font.lineHeight;
             if (y > ty2 - font.lineHeight) {
                 break;
@@ -2754,12 +3224,24 @@ public class WNodeScreen extends Screen {
         int copyX = bx + boxW - btnW * 2 - 16;
         int closeX = bx + boxW - btnW - 8;
         int btnY = by + boxH - 30;
-        graphics.fill(copyX, btnY, copyX + btnW, btnY + btnH, 0xFF2A4A3A);
-        graphics.renderOutline(copyX, btnY, btnW, btnH, 0xFF77AA88);
-        graphics.drawString(font, Component.translatable("gui.computed.share.copy_button"), copyX + 24, btnY + 6, 0xFFFFFFFF, false);
-        graphics.fill(closeX, btnY, closeX + btnW, btnY + btnH, 0xFF3A2A2A);
-        graphics.renderOutline(closeX, btnY, btnW, btnH, 0xFFAA7777);
-        graphics.drawString(font, Component.translatable("gui.computed.share.close_button"), closeX + 22, btnY + 6, 0xFFFFFFFF, false);
+        boolean copyHovered = mouseX >= copyX && mouseX < copyX + btnW && mouseY >= btnY && mouseY < btnY + btnH;
+        boolean closeHovered = mouseX >= closeX && mouseX < closeX + btnW && mouseY >= btnY && mouseY < btnY + btnH;
+        ComputedEditorStyle.drawButton(graphics, copyX, btnY, btnW, btnH, copyHovered, true);
+        graphics.drawString(
+                font,
+                Component.translatable("gui.computed.share.copy_button"),
+                copyX + 24,
+                btnY + 6,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
+        ComputedEditorStyle.drawDangerButton(graphics, closeX, btnY, btnW, btnH, closeHovered);
+        graphics.drawString(
+                font,
+                Component.translatable("gui.computed.share.close_button"),
+                closeX + 22,
+                btnY + 6,
+                ComputedEditorTheme.TEXT_HEADER,
+                false);
 
         if (!importDialogStatus.isEmpty()) {
             graphics.drawString(
@@ -2794,23 +3276,6 @@ public class WNodeScreen extends Screen {
             return;
         }
         int trackW = SCROLLER_TRACK_W;
-        int trackRight = trackLeft + trackW;
-        int trackBottom = trackTop + trackH;
-        int edgeGray = 0xFF4a5260;
-        int pitBase = 0xFF0c0e14;
-        int bevelDark = 0xFF2a3038;
-        int bevelLight = 0xFF5a6270;
-        // 1px chrome on all sides so top/left read against the panel like bottom/right.
-        graphics.fill(trackLeft, trackTop, trackRight, trackTop + 1, edgeGray);
-        graphics.fill(trackLeft, trackBottom - 1, trackRight, trackBottom, edgeGray);
-        graphics.fill(trackLeft, trackTop + 1, trackLeft + 1, trackBottom - 1, edgeGray);
-        graphics.fill(trackRight - 1, trackTop + 1, trackRight, trackBottom - 1, edgeGray);
-        graphics.fill(trackLeft + 1, trackTop + 1, trackRight - 1, trackBottom - 1, pitBase);
-        // Inset pit: dark along top/left, light along bottom/right.
-        graphics.fill(trackLeft + 1, trackTop + 1, trackRight - 1, trackTop + 2, bevelDark);
-        graphics.fill(trackLeft + 1, trackTop + 2, trackLeft + 2, trackBottom - 1, bevelDark);
-        graphics.fill(trackLeft + 1, trackBottom - 2, trackRight - 1, trackBottom - 1, bevelLight);
-        graphics.fill(trackRight - 2, trackTop + 1, trackRight - 1, trackBottom - 1, bevelLight);
         int pitX = trackLeft + 2;
         int pitY = trackTop + 2;
         int pitW = trackW - 4;
@@ -2818,26 +3283,14 @@ public class WNodeScreen extends Screen {
         if (pitW < 2 || pitH < 6) {
             return;
         }
-        graphics.fill(pitX, pitY, pitX + pitW, pitY + pitH, 0xFF080a10);
-        graphics.fill(pitX, pitY, pitX + pitW, pitY + pitH, 0xFF080a10);
         boolean active = totalItems > visibleRows;
         int maxScroll = Math.max(0, totalItems - visibleRows);
-        ResourceLocation tex = active ? ICON_SCROLLER_MULTICOLOR : ICON_SCROLLER_DISABLED;
         float fracVisible = visibleRows / (float) Math.max(1, totalItems);
         int slotH = active ? Mth.clamp(Mth.ceil(fracVisible * pitH), 8, pitH) : pitH;
         int thumbTravel = pitH - slotH;
         int slotY = pitY + (maxScroll <= 0 ? 0 : (int) Math.round(scroll * (thumbTravel / (float) maxScroll)));
-        float s = Math.min(pitW / (float) SCROLLER_TEX_W, slotH / (float) SCROLLER_TEX_H);
-        float drawW = SCROLLER_TEX_W * s;
-        float drawH = SCROLLER_TEX_H * s;
-        float ox = pitX + (pitW - drawW) / 2f;
-        // Top-align thumb in slot (including disabled full-track) so it never floats mid-track.
-        float oy = slotY;
-        graphics.pose().pushPose();
-        graphics.pose().translate(ox, oy, 0);
-        graphics.pose().scale(s, s, 1f);
-        graphics.blit(tex, 0, 0, 0, 0, SCROLLER_TEX_W, SCROLLER_TEX_H, SCROLLER_TEX_W, SCROLLER_TEX_H);
-        graphics.pose().popPose();
+        ComputedEditorStyle.drawScrollbar(
+                graphics, trackLeft, trackTop, trackW, trackH, slotY, slotH, active);
     }
 
     private void drawFunctionLibraryFooterHints(GuiGraphics graphics, int x, int y) {
@@ -2944,7 +3397,9 @@ public class WNodeScreen extends Screen {
         String base = safeFunctionFileBase(name);
         Path file = root.resolve(base + ".nbt");
         try {
-            NbtIo.writeCompressed(graph.save(), file);
+            FunctionDefinitionStore emptyLibrary = new FunctionDefinitionStore();
+            CompoundTag program = ProgramCodec.write(ProgramBridge.snapshot(graph, emptyLibrary, 0L));
+            NbtIo.writeCompressed(program, file);
             playUiClick(1.06f);
         } catch (IOException e) {
             playUiClick(0.85f);
@@ -3126,11 +3581,8 @@ public class WNodeScreen extends Screen {
     private void renderFullscreenToggle(GuiGraphics graphics, int mx, int my, float ease) {
         int x = fullscreenBtnX();
         int y = fullscreenBtnY();
-        int alphaBg = (int) (200 * ease);
         boolean hov = fullscreenBtnContains(mx, my);
-        int fill = (alphaBg << 24) | (hov ? 0x3a3a3a : 0x2a2a2a);
-        graphics.fill(x, y, x + FULLSCREEN_BTN, y + FULLSCREEN_BTN, fill);
-        graphics.renderOutline(x, y, FULLSCREEN_BTN, FULLSCREEN_BTN, ((int) (255 * ease) << 24) | 0x777777);
+        ComputedEditorStyle.drawButton(graphics, x, y, FULLSCREEN_BTN, FULLSCREEN_BTN, hov, editorFullscreen);
         ResourceLocation icon = editorFullscreen ? ICON_MINIMIZE : ICON_MAXIMIZE;
         int ix = x + (FULLSCREEN_BTN - ICON_SIZE) / 2;
         int iy = y + (FULLSCREEN_BTN - ICON_SIZE) / 2;
@@ -3633,13 +4085,13 @@ public class WNodeScreen extends Screen {
         int mh = menuHeaderHeight() + mainBodyH;
 
         drawMenuPanel(graphics, menuX, menuY, mw, mh);
-        graphics.drawString(font, "Add node", menuX + 4, menuY + 4, 0xFF669966, false);
+        graphics.drawString(font, "Add node", menuX + 4, menuY + 4, ComputedEditorTheme.ACCENT_MUTED, false);
         graphics.drawString(
                 font,
                 "> " + searchQuery + (((System.currentTimeMillis() / 500) % 2 == 0) ? "_" : " "),
                 menuX + 4,
                 menuY + 4 + menuRowHeight(),
-                0xFF00FF88,
+                ComputedEditorTheme.ACCENT,
                 false);
         drawBrowseRows(
                 graphics,
@@ -3686,24 +4138,31 @@ public class WNodeScreen extends Screen {
         }
 
         drawMenuPanel(graphics, menuX, menuY, mw, mh);
-        graphics.drawString(font, "Filter (all categories)", menuX + 4, menuY + 4, 0xFF669966, false);
+        graphics.drawString(
+                font,
+                "Filter (all categories)",
+                menuX + 4,
+                menuY + 4,
+                ComputedEditorTheme.ACCENT_MUTED,
+                false);
         graphics.drawString(
                 font,
                 "> " + searchQuery + (((System.currentTimeMillis() / 500) % 2 == 0) ? "_" : " "),
                 menuX + 4,
                 menuY + 4 + menuRowHeight(),
-                0xFF00FF88,
+                ComputedEditorTheme.ACCENT,
                 false);
         for (int i = 0; i < visible; i++) {
             BrowseNodeRow row = searchHitRows.get(i);
             int ry = menuY + menuHeaderHeight() + i * menuRowHeight();
             boolean hovered = mouseY >= ry && mouseY < ry + menuRowHeight() && mouseX >= menuX && mouseX <= menuX + mw;
-            int color = (i == 0 || hovered) ? 0xFFFFFFFF : 0xFF888888;
+            int color = (i == 0 || hovered) ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_SECONDARY;
             if (i == 0 || hovered) {
-                graphics.fill(menuX + 1, ry, menuX + mw - 1, ry + menuRowHeight(), 0x4400FF88);
+                ComputedEditorStyle.drawMenuRow(
+                        graphics, menuX, ry, mw, menuRowHeight(), hovered, i == 0);
             }
             boolean locked = isEditorPeripheralLocked(row.nodeType());
-            int rowColor = locked ? (hovered ? 0xFFCC8888 : 0xFF886666) : color;
+            int rowColor = locked ? ComputedEditorTheme.STATUS_LOCKED_TEXT : color;
             graphics.drawString(font, row.label(), menuX + 6, ry + 1, rowColor, false);
         }
         if (searchHitRows.size() > visible) {
@@ -3712,15 +4171,13 @@ public class WNodeScreen extends Screen {
                     "(" + searchHitRows.size() + " total — type to narrow)",
                     menuX + 4,
                     menuY + menuHeaderHeight() + visible * menuRowHeight() + 2,
-                    0xFF666666,
+                    ComputedEditorTheme.TEXT_TERTIARY,
                     false);
         }
     }
 
     private static void drawMenuPanel(GuiGraphics graphics, int x, int y, int w, int h) {
-        graphics.fill(x + 2, y + 2, x + w + 2, y + h + 2, 0x55000000);
-        graphics.fill(x, y, x + w, y + h, 0xEE1A1A1A);
-        graphics.renderOutline(x, y, w, h, 0xFF00FF88);
+        ComputedEditorStyle.drawMenuPanel(graphics, x, y, w, h);
     }
 
     private void drawBrowseRows(
@@ -3741,9 +4198,9 @@ public class WNodeScreen extends Screen {
             if (hovered && browseMouseBlockedByDeeperPanel(mx, my, occlusionPanelDepth)) {
                 hovered = false;
             }
-            int color = hovered ? 0xFFFFFFFF : 0xFF888888;
+            int color = hovered ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_SECONDARY;
             if (hovered) {
-                graphics.fill(rx + 1, y0, rx + rw - 1, y0 + rh, 0x4400FF88);
+                ComputedEditorStyle.drawMenuRow(graphics, rx, y0, rw, rh, true, false);
             }
             graphics.enableScissor(rx + 1, y0, rx + rw - 1, y0 + rh);
             if (row instanceof BrowseCategoryRow c) {
@@ -3753,7 +4210,7 @@ public class WNodeScreen extends Screen {
                 graphics.drawString(font, text, rx + 6, y0 + 1, color, false);
             } else if (row instanceof BrowseNodeRow n) {
                 boolean locked = isEditorPeripheralLocked(n.nodeType());
-                int rowColor = locked ? (hovered ? 0xFFCC8888 : 0xFF886666) : color;
+                int rowColor = locked ? ComputedEditorTheme.STATUS_LOCKED_TEXT : color;
                 graphics.drawString(font, n.label(), rx + 6, y0 + 1, rowColor, false);
             }
             graphics.disableScissor();
@@ -3849,181 +4306,23 @@ public class WNodeScreen extends Screen {
         graphics.pose().popPose();
     }
 
-    private void clearWireHover() {
-        wireHoverKind = WireHoverKind.NONE;
-        wireHoverConnIdx = -1;
+    private boolean wireGeometryMoving() {
+        return draggingNode != null || draggingSection != null || draggingWireConnIdx >= 0;
     }
-
-    /** Invalidate the {@link #updateWireInteractionHover} cache; call when the panel is left so re-entry recomputes. */
-    private void invalidateHoverCache() {
-        hoverCacheGx = Integer.MIN_VALUE;
-        hoverCacheGy = Integer.MIN_VALUE;
-    }
-
-    private static int wireArgbForConnection(WConnection c) {
-        int h = Objects.hash(c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin());
-        return WIRE_ARGB_PALETTE[Math.floorMod(h, WIRE_ARGB_PALETTE.length)];
-    }
-
-    private static void fillWireChainEndpoints(WConnection conn, WNode src, WNode tgt, int[] xs, int[] ys) {
-        int i = 0;
-        xs[i] = src.getX() + src.getWidth();
-        ys[i] = src.getY() + 18 + conn.sourcePin() * 12;
-        for (int w = 0; w < conn.waypointXs().length; w++) {
-            i++;
-            xs[i] = conn.waypointXs()[w];
-            ys[i] = conn.waypointYs()[w];
-        }
-        i++;
-        xs[i] = tgt.getX();
-        ys[i] = tgt.getY() + 18 + conn.targetPin() * 12;
-    }
-
-    private static int wireChainLen(WConnection c) {
-        return 2 + c.waypointXs().length;
-    }
-
-    private static float distSq(int ax, int ay, int bx, int by) {
-        int dx = ax - bx;
-        int dy = ay - by;
-        return dx * dx + dy * dy;
-    }
-
-    private static boolean waypointInsertClearOfOthers(
-            int ix, int iy, int[] xs, int[] ys, int seg, float minD) {
-        float m2 = minD * minD;
-        int a = seg;
-        int b = seg + 1;
-        if (distSq(ix, iy, xs[a], ys[a]) < m2 || distSq(ix, iy, xs[b], ys[b]) < m2) {
-            return false;
-        }
-        for (int k = 0; k < xs.length; k++) {
-            if (k == a || k == b) {
-                continue;
-            }
-            if (distSq(ix, iy, xs[k], ys[k]) < m2) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private int wirePickGhostRadiusGraph() {
-        float scale = editorContentScale();
-        return Math.max(5, Mth.ceil(9f / scale));
-    }
-
-    /** Throttle state for {@link #updateWireInteractionHover}: when mouse and topology are stable, skip the 24-sample-per-segment scan. */
-    private int hoverCacheGx = Integer.MIN_VALUE;
-    private int hoverCacheGy = Integer.MIN_VALUE;
-    private int hoverCacheConnCount = -1;
-    private int hoverCacheNodeCount = -1;
-    private float hoverCacheScale = Float.NaN;
 
     private void updateWireInteractionHover(int gx, int gy) {
-        int connCount = graph.getConnections().size();
-        int nodeCount = graph.getNodes().size();
-        float scaleNow = editorContentScale();
-        if (gx == hoverCacheGx
-                && gy == hoverCacheGy
-                && connCount == hoverCacheConnCount
-                && nodeCount == hoverCacheNodeCount
-                && scaleNow == hoverCacheScale) {
-            return;
-        }
-        hoverCacheGx = gx;
-        hoverCacheGy = gy;
-        hoverCacheConnCount = connCount;
-        hoverCacheNodeCount = nodeCount;
-        hoverCacheScale = scaleNow;
-        clearWireHover();
-        if (graphPointBlocksWireInteraction(gx, gy)) {
-            return;
-        }
-        float scale = editorContentScale();
-        int waypointPickR = Math.max(6, Mth.ceil(10f / scale));
-        int curvePickR = Math.max(5, Mth.ceil(8f / scale));
-        int insertMinSep = Math.max(12, Mth.ceil(14f / scale));
-        float wpR2 = waypointPickR * (float) waypointPickR;
-        float cvR2 = curvePickR * (float) curvePickR;
-        int bestWpConn = -1;
-        int bestWpIdx = -1;
-        float bestWpD2 = wpR2;
-        List<WConnection> conns = graph.getConnections();
-        for (int ci = 0; ci < conns.size(); ci++) {
-            WConnection c = conns.get(ci);
-            for (int wi = 0; wi < c.waypointXs().length; wi++) {
-                float d2 = distSq(gx, gy, c.waypointXs()[wi], c.waypointYs()[wi]);
-                if (d2 <= bestWpD2) {
-                    bestWpD2 = d2;
-                    bestWpConn = ci;
-                    bestWpIdx = wi;
-                }
-            }
-        }
-        if (bestWpConn >= 0) {
-            wireHoverKind = WireHoverKind.WAYPOINT;
-            wireHoverConnIdx = bestWpConn;
-            wireHoverWaypointIdx = bestWpIdx;
-            return;
-        }
-        int bestCi = -1;
-        int bestSeg = 0;
-        int bestIx = 0;
-        int bestIy = 0;
-        float bestD2 = cvR2;
-        boolean insertOk = false;
-        for (int ci = 0; ci < conns.size(); ci++) {
-            WConnection c = conns.get(ci);
-            WNode s = findNode(c.sourceNode());
-            WNode t = findNode(c.targetNode());
-            if (s == null || t == null) {
-                continue;
-            }
-            int n = wireChainLen(c);
-            int[] xs = new int[n];
-            int[] ys = new int[n];
-            fillWireChainEndpoints(c, s, t, xs, ys);
-            for (int seg = 0; seg < n - 1; seg++) {
-                int ax = xs[seg];
-                int ay = ys[seg];
-                int bx = xs[seg + 1];
-                int by = ys[seg + 1];
-                for (int step = 0; step <= 24; step++) {
-                    float tf = step / 24f;
-                    float px = wireCurveX(ax, bx, tf);
-                    float py = wireCurveY(ay, by, tf);
-                    float dx = gx - px;
-                    float dy = gy - py;
-                    float d2 = dx * dx + dy * dy;
-                    if (d2 < bestD2) {
-                        bestD2 = d2;
-                        bestCi = ci;
-                        bestSeg = seg;
-                        bestIx = Math.round(px);
-                        bestIy = Math.round(py);
-                        insertOk =
-                                waypointInsertClearOfOthers(bestIx, bestIy, xs, ys, seg, (float) insertMinSep);
-                    }
-                }
-            }
-        }
-        if (bestCi < 0) {
-            return;
-        }
-        wireHoverConnIdx = bestCi;
-        if (insertOk) {
-            wireHoverKind = WireHoverKind.INSERT_GHOST;
-            wireHoverInsertSeg = bestSeg;
-            wireHoverInsertGx = bestIx;
-            wireHoverInsertGy = bestIy;
-        } else {
-            wireHoverKind = WireHoverKind.CURVE_ONLY;
-        }
+        wireController.updateHover(
+                graph,
+                gx,
+                gy,
+                editorContentScale(),
+                editorRevision,
+                wireGeometryMoving(),
+                point -> graphPointBlocksWireInteraction((int) point.x(), (int) point.y()));
     }
 
     private boolean graphPointBlocksWireInteraction(int gx, int gy) {
-        for (WNode n : graph.getNodes()) {
+        for (WNode n : nodesAtGraphPoint(gx, gy, false)) {
             if (gx >= n.getX()
                     && gx < n.getX() + n.getWidth()
                     && gy >= n.getY()
@@ -4052,8 +4351,7 @@ public class WNodeScreen extends Screen {
         graph.getConnections()
                 .set(
                         connIdx,
-                        new WConnection(
-                                c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin(), nxs, nys));
+                        c.withWaypoints(nxs, nys));
     }
 
     private void removeWaypointFromConnection(int connIdx, int wpIdx) {
@@ -4066,8 +4364,7 @@ public class WNodeScreen extends Screen {
             graph.getConnections()
                     .set(
                             connIdx,
-                            WConnection.withoutWaypoints(
-                                    c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin()));
+                            c.withWaypoints(new int[0], new int[0]));
             return;
         }
         int[] nxs = new int[n - 1];
@@ -4083,128 +4380,7 @@ public class WNodeScreen extends Screen {
         graph.getConnections()
                 .set(
                         connIdx,
-                        new WConnection(
-                                c.sourceNode(), c.sourcePin(), c.targetNode(), c.targetPin(), nxs, nys));
-    }
-
-    private void drawConnection(GuiGraphics graphics, WConnection conn, int connIdx) {
-        WNode src = findNode(conn.sourceNode());
-        WNode tgt = findNode(conn.targetNode());
-        if (src == null || tgt == null) {
-            return;
-        }
-        int n = wireChainLen(conn);
-        if (wireChainXs.length < n) {
-            wireChainXs = new int[n];
-            wireChainYs = new int[n];
-        }
-        int[] xs = wireChainXs;
-        int[] ys = wireChainYs;
-        fillWireChainEndpoints(conn, src, tgt, xs, ys);
-        int color = wireArgbForConnection(conn);
-        for (int seg = 0; seg < n - 1; seg++) {
-            drawSmoothCurve(graphics, xs[seg], ys[seg], xs[seg + 1], ys[seg + 1], color, 1.5f);
-        }
-        graphics.pose().pushPose();
-        graphics.pose().translate(0, 0, 500);
-        drawConnectionPulseTravelChain(graphics, xs, ys, n, src.getTopoDepth(), color);
-        graphics.pose().popPose();
-        int rgb = color & 0xFFFFFF;
-        int wh = Math.max(3, Mth.ceil(4f / editorContentScale()));
-        for (int w = 0; w < conn.waypointXs().length; w++) {
-            int wx = conn.waypointXs()[w];
-            int wy = conn.waypointYs()[w];
-            boolean hot =
-                    wireHoverKind == WireHoverKind.WAYPOINT
-                            && connIdx == wireHoverConnIdx
-                            && w == wireHoverWaypointIdx;
-            int ring = hot ? 0xFFFFFFFF : (0xCC000000 | rgb);
-            int core = 0xFF000000 | rgb;
-            int half = wh / 2;
-            graphics.fill(wx - wh - 1, wy - wh - 1, wx + wh + 2, wy + wh + 2, ring);
-            graphics.fill(wx - half, wy - half, wx + half + 1, wy + half + 1, core);
-        }
-        if (connIdx == wireHoverConnIdx && wireHoverKind == WireHoverKind.INSERT_GHOST) {
-            int gr = Math.max(3, Mth.ceil(5f / editorContentScale()));
-            int gx = wireHoverInsertGx;
-            int gy = wireHoverInsertGy;
-            graphics.fill(gx - gr - 2, gy - gr - 2, gx + gr + 3, gy + gr + 3, WIRE_INSERT_GHOST_ARGB);
-            graphics.fill(gx - gr, gy - gr, gx + gr + 1, gy + gr + 1, 0xFF222244);
-        }
-    }
-
-    /** Loops per second along each wire (phase 0–1); independent of sim pulses so motion stays smooth. */
-    private static final float PULSE_SCROLL_SPEED = 0.11f;
-    private static final float PULSE_STAGGER_PER_DEPTH = 0.034f;
-    /** Fewer sprites than before; motion is interpolated along the curve each frame. */
-    private static final int PULSE_DOT_COUNT = 2;
-    private static final float PULSE_DOT_SPACING = 0.11f;
-
-    private void drawConnectionPulseTravelChain(
-            GuiGraphics graphics, int[] xs, int[] ys, int pointCount, int topoDepth, int wireArgb) {
-        int segCount = pointCount - 1;
-        if (segCount <= 0) {
-            return;
-        }
-        int rgb = wireArgb & 0xFFFFFF;
-        float base = wirePulseScroll - Mth.floor(wirePulseScroll);
-        float phase = base - topoDepth * PULSE_STAGGER_PER_DEPTH;
-        phase -= Mth.floor(phase);
-        for (int k = 0; k < PULSE_DOT_COUNT; k++) {
-            float u = phase - k * PULSE_DOT_SPACING;
-            u = u - Mth.floor(u);
-            if (u < 0) {
-                u += 1f;
-            }
-            float smooth = u * u * (3.0f - 2.0f * u);
-            float g = smooth * segCount;
-            int seg = Math.min(segCount - 1, (int) g);
-            float localT = g - seg;
-            localT = Mth.clamp(localT, 0f, 1f);
-            float px = wireCurveX(xs[seg], xs[seg + 1], localT);
-            float py = wireCurveY(ys[seg], ys[seg + 1], localT);
-            int alpha = 235 - k * 70;
-            int core = (alpha << 24) | rgb;
-            int glow = ((alpha / 4) << 24) | rgb;
-            graphics.fill((int) px - 3, (int) py - 3, (int) px + 4, (int) py + 4, glow);
-            graphics.fill((int) px - 1, (int) py - 1, (int) px + 2, (int) py + 2, core);
-        }
-    }
-
-    /** Matches {@link #drawSmoothCurve}: P1 = (midX, y1), P2 = (midX, y2). */
-    private static float wireCurveX(int x1, int x2, float t) {
-        float mid = x1 + (x2 - x1) * 0.5f;
-        float mt = 1.0f - t;
-        return mt * mt * mt * x1 + 3 * mt * mt * t * mid + 3 * mt * t * t * mid + t * t * t * x2;
-    }
-
-    private static float wireCurveY(int y1, int y2, float t) {
-        float mt = 1.0f - t;
-        return mt * mt * mt * y1 + 3 * mt * mt * t * y1 + 3 * mt * t * t * y2 + t * t * t * y2;
-    }
-
-    private void drawSmoothCurve(GuiGraphics graphics, int x1, int y1, int x2, int y2, int color, float thickness) {
-        int steps = 24; int lastX = x1; int lastY = y1;
-        for (int i = 1; i <= steps; i++) {
-            float t = (float) i / steps;
-            float cx1 = x1 + (x2 - x1) * 0.5f; float cy1 = y1;
-            float cx2 = x1 + (x2 - x1) * 0.5f; float cy2 = y2;
-            float mt = 1.0f - t;
-            float x = mt * mt * mt * x1 + 3 * mt * mt * t * cx1 + 3 * mt * t * t * cx2 + t * t * t * x2;
-            float y = mt * mt * mt * y1 + 3 * mt * mt * t * cy1 + 3 * mt * t * t * cy2 + t * t * t * y2;
-            drawLine(graphics, lastX, lastY, (int)x, (int)y, color, thickness);
-            lastX = (int)x; lastY = (int)y;
-        }
-    }
-
-    private void drawLine(GuiGraphics graphics, int x1, int y1, int x2, int y2, int color, float thickness) {
-        int dx = x2 - x1; int dy = y2 - y1;
-        int steps = Math.max(Math.abs(dx), Math.abs(dy)); if (steps == 0) return;
-        for (int i = 0; i <= steps; i++) {
-            float t = (float) i / steps;
-            int px = x1 + (int)(dx * t); int py = y1 + (int)(dy * t);
-            graphics.fill(px, py, px + (int)Math.max(1, thickness), py + (int)Math.max(1, thickness), color);
-        }
+                        c.withWaypoints(nxs, nys));
     }
 
     private void renderParticles(GuiGraphics graphics, float deltaTime) {
@@ -4291,6 +4467,20 @@ public class WNodeScreen extends Screen {
         if (itemPickerOpen) {
             return handleItemPickerClick(mouseX, mouseY, button);
         }
+        refreshEditorDiagnostics();
+        if (diagnosticsIndicatorContains(mouseX, mouseY)) {
+            if (button == 0) {
+                diagnosticsPanelOpen = !diagnosticsPanelOpen;
+                playUiClick(diagnosticsPanelOpen ? 1.02f : 0.96f);
+            }
+            return true;
+        }
+        if (diagnosticsPanelContains(mouseX, mouseY)) {
+            return true;
+        }
+        if (diagnosticsPanelOpen && button == 0) {
+            diagnosticsPanelOpen = false;
+        }
         if (handleNestedDiskToolbarClick(mouseX, mouseY, button)) {
             return true;
         }
@@ -4375,6 +4565,7 @@ public class WNodeScreen extends Screen {
         }
         int nx = screenToGraphX(mouseX);
         int ny = screenToGraphY(mouseY);
+        boolean fullDetailInteraction = effectiveDetailLevel() == EditorDetailLevel.FULL;
         if (isCreatingSection) {
             if (button == 0) {
                 sectionCreateEndX = nx;
@@ -4490,50 +4681,61 @@ public class WNodeScreen extends Screen {
                 return true;
             }
         }
-        if (button == 0 && linkingNode == null && !isCreatingSection && isInsideEditorPanel(mouseX, mouseY)) {
+        if (fullDetailInteraction
+                && button == 0
+                && linkingNode == null
+                && !isCreatingSection
+                && isInsideEditorPanel(mouseX, mouseY)) {
             updateWireInteractionHover(nx, ny);
+            WireEditorController.Hover wireHover = wireController.hover();
             if (Screen.hasAltDown()) {
-                if (wireHoverKind == WireHoverKind.WAYPOINT) {
+                if (wireHover.is(WireEditorController.HoverKind.WAYPOINT)) {
                     recordCheckpointBeforeEdit();
-                    removeWaypointFromConnection(wireHoverConnIdx, wireHoverWaypointIdx);
-                    clearWireHover();
+                    removeWaypointFromConnection(wireHover.connectionIndex(), wireHover.waypointIndex());
+                    wireController.clearHover();
                     playUiClick(0.78f);
                     return true;
                 }
-                if (wireHoverKind == WireHoverKind.INSERT_GHOST
-                        || wireHoverKind == WireHoverKind.CURVE_ONLY) {
+                if (wireHover.is(WireEditorController.HoverKind.INSERT_GHOST)
+                        || wireHover.is(WireEditorController.HoverKind.CURVE_ONLY)) {
                     recordCheckpointBeforeEdit();
-                    graph.getConnections().remove(wireHoverConnIdx);
+                    graph.getConnections().remove(wireHover.connectionIndex());
                     graph.updateTopology();
-                    clearWireHover();
+                    wireController.clearHover();
                     playUiClick(0.76f);
                     return true;
                 }
             } else {
-                if (wireHoverKind == WireHoverKind.INSERT_GHOST) {
-                    int gr = wirePickGhostRadiusGraph();
-                    int ddx = nx - wireHoverInsertGx;
-                    int ddy = ny - wireHoverInsertGy;
+                if (wireHover.is(WireEditorController.HoverKind.INSERT_GHOST)) {
+                    int gr = wireController.ghostPickRadius(editorContentScale());
+                    int ddx = nx - wireHover.insertionX();
+                    int ddy = ny - wireHover.insertionY();
                     if (ddx * ddx + ddy * ddy <= gr * gr) {
                         recordCheckpointBeforeEdit();
                         insertWaypointOnConnection(
-                                wireHoverConnIdx, wireHoverInsertSeg, wireHoverInsertGx, wireHoverInsertGy);
+                                wireHover.connectionIndex(),
+                                wireHover.insertionSegment(),
+                                wireHover.insertionX(),
+                                wireHover.insertionY());
                         playUiClick(1.04f);
                         return true;
                     }
                 }
-                if (wireHoverKind == WireHoverKind.WAYPOINT) {
+                if (wireHover.is(WireEditorController.HoverKind.WAYPOINT)) {
                     recordCheckpointBeforeEdit();
-                    draggingWireConnIdx = wireHoverConnIdx;
-                    draggingWireWaypointIdx = wireHoverWaypointIdx;
+                    draggingWireConnIdx = wireHover.connectionIndex();
+                    draggingWireWaypointIdx = wireHover.waypointIndex();
                     return true;
                 }
             }
         }
         if (button == 1) {
             boolean hitAnything = false;
-            for (WNode node : graph.getNodes()) {
-                if (node.getPinAt(nx - node.getX(), ny - node.getY(), true) != -1 || node.getPinAt(nx - node.getX(), ny - node.getY(), false) != -1 || (nx >= node.getX() && nx <= node.getX() + node.getWidth() && ny >= node.getY() && ny <= node.getY() + node.getHeight())) {
+            for (WNode node : nodesAtGraphPoint(nx, ny, false)) {
+                boolean pinHit = fullDetailInteraction
+                        && (node.getPinAt(nx - node.getX(), ny - node.getY(), true) != -1
+                                || node.getPinAt(nx - node.getX(), ny - node.getY(), false) != -1);
+                if (pinHit || (nx >= node.getX() && nx <= node.getX() + node.getWidth() && ny >= node.getY() && ny <= node.getY() + node.getHeight())) {
                     hitAnything = true; break;
                 }
             }
@@ -4558,8 +4760,8 @@ public class WNodeScreen extends Screen {
                 return true;
             }
         }
-        if (button == 1) {
-            for (WNode node : graph.getNodes()) {
+        if (button == 1 && fullDetailInteraction) {
+            for (WNode node : nodesAtGraphPoint(nx, ny, false)) {
                 int inPin = node.getPinAt(nx - node.getX(), ny - node.getY(), true);
                 int outPin = node.getPinAt(nx - node.getX(), ny - node.getY(), false);
                 if (inPin != -1) {
@@ -4576,9 +4778,10 @@ public class WNodeScreen extends Screen {
                 }
             }
         }
-        for (int i = graph.getNodes().size() - 1; i >= 0; i--) {
-            WNode node = graph.getNodes().get(i);
-            int outPin = node.getPinAt(nx - node.getX(), ny - node.getY(), false);
+        for (WNode node : nodesAtGraphPoint(nx, ny, true)) {
+            int outPin = fullDetailInteraction
+                    ? node.getPinAt(nx - node.getX(), ny - node.getY(), false)
+                    : -1;
             if (outPin != -1 && !isEditorPeripheralLocked(node.getTypeId())) {
                 linkingNode = node;
                 linkingPin = outPin;
@@ -4594,16 +4797,19 @@ public class WNodeScreen extends Screen {
                     return true;
                 }
 
-                if (!isEditorPeripheralLocked(node.getTypeId())
-                        && node.mouseClicked(nx - node.getX(), ny - node.getY(), button)) {
-                    return true;
+                if (fullDetailInteraction && !isEditorPeripheralLocked(node.getTypeId())) {
+                    boolean elementHandled = node.mouseClicked(nx - node.getX(), ny - node.getY(), button);
+                    updateIndexedNode(node);
+                    if (elementHandled) {
+                        return true;
+                    }
                 }
 
                 recordCheckpointBeforeEdit();
                 draggingNode = node;
                 dragOffsetX = nx - node.getX();
                 dragOffsetY = ny - node.getY();
-                graph.getNodes().remove(i);
+                graph.getNodes().remove(node);
                 graph.getNodes().add(node);
                 return true;
             }
@@ -4634,14 +4840,15 @@ public class WNodeScreen extends Screen {
         if (isSelecting) {
             float x1 = (float)Math.min(selStartX, selEndX); float y1 = (float)Math.min(selStartY, selEndY);
             float x2 = (float)Math.max(selStartX, selEndX); float y2 = (float)Math.max(selStartY, selEndY);
-            for (WNode node : graph.getNodes()) {
+            GraphRect selection = new GraphRect(x1, y1, x2, y2);
+            for (WNode node : nodesIntersectingGraphRect(selection)) {
                 if (node.getX() + node.getWidth() >= x1 && node.getX() <= x2 && node.getY() + node.getHeight() >= y1 && node.getY() <= y2) node.setSelected(true);
             }
             isSelecting = false; return true;
         }
         if (linkingNode != null) {
             boolean linked = false;
-            for (WNode node : graph.getNodes()) {
+            for (WNode node : nodesAtGraphPoint(nx, ny, false)) {
                 int inPin = node.getPinAt(nx - node.getX(), ny - node.getY(), true);
                 if (inPin != -1) {
                     if (isEditorPeripheralLocked(linkingNode.getTypeId())
@@ -4649,11 +4856,11 @@ public class WNodeScreen extends Screen {
                         playUiClick(0.82f);
                         continue;
                     }
-                    dev.devce.websnodelib.api.WPin srcPin = linkingNode.getOutputs().get(linkingPin);
-                    dev.devce.websnodelib.api.WPin tgtPin = node.getInputs().get(inPin);
+                    dev.propulsionteam.computed.internal.node.api.WPin srcPin = linkingNode.getOutputs().get(linkingPin);
+                    dev.propulsionteam.computed.internal.node.api.WPin tgtPin = node.getInputs().get(inPin);
                     if (srcPin.getDataType() != tgtPin.getDataType()
-                            && !(srcPin.getDataType() == dev.devce.websnodelib.api.WPin.DataType.NUMBER
-                                    && tgtPin.getDataType() == dev.devce.websnodelib.api.WPin.DataType.STRING)) {
+                            && !(srcPin.getDataType() == dev.propulsionteam.computed.internal.node.api.WPin.DataType.NUMBER
+                                    && tgtPin.getDataType() == dev.propulsionteam.computed.internal.node.api.WPin.DataType.STRING)) {
                         playUiClick(0.82f);
                         continue;
                     }
@@ -4680,8 +4887,11 @@ public class WNodeScreen extends Screen {
                 menuY = (int) mouseY;
             }
         }
-        if (selectedNode != null && !isEditorPeripheralLocked(selectedNode.getTypeId())) {
+        if (effectiveDetailLevel() == EditorDetailLevel.FULL
+                && selectedNode != null
+                && !isEditorPeripheralLocked(selectedNode.getTypeId())) {
             selectedNode.mouseReleased(nx, ny, button);
+            updateIndexedNode(selectedNode);
         }
         isPanning = false;
         draggingNode = null;
@@ -4812,6 +5022,7 @@ public class WNodeScreen extends Screen {
                 int[] p = sectionDragOriginalNodePos.get(id);
                 if (n != null && p != null) {
                     n.setPos(p[0] + totalDx, p[1] + totalDy);
+                    updateIndexedNode(n);
                 }
             }
             if ((ddx != 0 || ddy != 0) && !sectionDragMemberNodes.isEmpty()) {
@@ -4842,7 +5053,12 @@ public class WNodeScreen extends Screen {
                 if (!moved.isEmpty()) {
                     graph.shiftWaypointsForConnectionsTouching(moved, idx, idy);
                 }
-                for (WNode n : graph.getNodes()) if (n.isSelected()) n.setPos(n.getX() + idx, n.getY() + idy);
+                for (WNode n : graph.getNodes()) {
+                    if (n.isSelected()) {
+                        n.setPos(n.getX() + idx, n.getY() + idy);
+                        updateIndexedNode(n);
+                    }
+                }
             }
             return true;
         }
@@ -4894,7 +5110,8 @@ public class WNodeScreen extends Screen {
                 return true;
             }
         }
-        zoom = (float) Math.max(0.1, Math.min(3.0, zoom + scrollY * 0.1));
+        zoom = (float) Math.max(0.1, Math.min(3.0, zoom + scrollY * ZOOM_SCROLL_STEP));
+        updateEditorDetailLevel();
         return true;
     }
 
@@ -5164,13 +5381,15 @@ public class WNodeScreen extends Screen {
             }
             return true;
         }
-        if (selectedNode != null
+        if (effectiveDetailLevel() == EditorDetailLevel.FULL
+                && selectedNode != null
                 && !isEditorPeripheralLocked(selectedNode.getTypeId())
                 && selectedNode.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
         boolean nodeUiFocused =
-                selectedNode != null
+                effectiveDetailLevel() == EditorDetailLevel.FULL
+                        && selectedNode != null
                         && !isEditorPeripheralLocked(selectedNode.getTypeId())
                         && selectedNode.hasFocusedElement();
         if (!nodeUiFocused && keyCode == GLFW.GLFW_KEY_S && hasControlDown()) {
@@ -5234,7 +5453,6 @@ public class WNodeScreen extends Screen {
                 return true;
             }
         }
-        if (keyCode == 73 && hasControlDown() && hasAltDown()) { spawnSecretNode(); return true; }
         if (keyCode == 65 && hasControlDown()) { graph.getNodes().forEach(n -> n.setSelected(true)); return true; }
         if (keyCode == 67 && hasControlDown()) { copySelected(); return true; }
         if (keyCode == 86 && hasControlDown()) { pasteFromClipboard(); return true; }
@@ -5292,7 +5510,8 @@ public class WNodeScreen extends Screen {
             searchQuery += codePoint;
             return true;
         }
-        if (selectedNode != null
+        if (effectiveDetailLevel() == EditorDetailLevel.FULL
+                && selectedNode != null
                 && !isEditorPeripheralLocked(selectedNode.getTypeId())
                 && selectedNode.charTyped(codePoint, modifiers)) {
             return true;
@@ -5346,16 +5565,6 @@ public class WNodeScreen extends Screen {
         }
     }
 
-    private void spawnSecretNode() {
-        int nx = (int)(-panX + width / 2f); int ny = (int)(-panY + height / 2f);
-        WNode node = new WNode(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("websnodelib", "secret"), "Webyep's Gift", nx, ny);
-        node.setWidth(160);
-        node.addElement(new dev.devce.websnodelib.api.elements.WGif(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("websnodelib", "textures/gui/secret.gif"), 150, 150));
-        node.addElement(new dev.devce.websnodelib.api.elements.WLabel("   Made with love from Webyep", 0xFF00FF88));
-        recordCheckpointBeforeEdit();
-        graph.addNode(node);
-    }
-
     private static boolean dockButtonHovered(int mx, int my, int bx, int by, int btn) {
         return mx >= bx && mx < bx + btn && my >= by && my < by + btn;
     }
@@ -5366,18 +5575,37 @@ public class WNodeScreen extends Screen {
         }
         NodeDockLayout L = computeNodeDockLayout();
         int alphaBg = (int) (230 * ease);
-        graphics.fill(L.barX, L.barY, L.barX + L.barW, L.barY + L.barH, (alphaBg << 24) | 0x121212);
-        graphics.renderOutline(L.barX, L.barY, L.barW, L.barH, 0xFF00FF88);
+        int dockFill = (alphaBg << 24) | (ComputedEditorTheme.BACKGROUND_SECONDARY & 0x00FFFFFF);
+        ComputedEditorStyle.drawBeveledPanel(
+                graphics,
+                L.barX,
+                L.barY,
+                L.barW,
+                L.barH,
+                dockFill,
+                ComputedEditorTheme.BORDER_MENU,
+                ComputedEditorTheme.BORDER_INNER);
 
         int iconOff = (L.btn - 16) / 2;
         if (dockButtonHovered(mx, my, L.dupX, L.btnY, L.btn)) {
-            graphics.fill(L.dupX, L.btnY, L.dupX + L.btn, L.btnY + L.btn, 0x4400FF88);
+            ComputedEditorStyle.drawMenuRow(graphics, L.dupX, L.btnY, L.btn, L.btn, true, false);
         }
         graphics.blit(ICON_DUPLICATE, L.dupX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        graphics.drawString(font, "+", L.dupX + 3, L.btnY + L.btn - font.lineHeight - 1, 0xFF669966, false);
+        graphics.drawString(
+                font,
+                "+",
+                L.dupX + 3,
+                L.btnY + L.btn - font.lineHeight - 1,
+                ComputedEditorTheme.ACCENT_MUTED,
+                false);
 
         if (dockButtonHovered(mx, my, L.delX, L.btnY, L.btn)) {
-            graphics.fill(L.delX, L.btnY, L.delX + L.btn, L.btnY + L.btn, 0x44FF6666);
+            graphics.fill(
+                    L.delX,
+                    L.btnY,
+                    L.delX + L.btn,
+                    L.btnY + L.btn,
+                    ComputedEditorTheme.DANGER_HOVER);
         }
         graphics.blit(ICON_DELETE, L.delX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
         int dockKey = 11;
@@ -5386,7 +5614,7 @@ public class WNodeScreen extends Screen {
         blitScaledHintTile(graphics, KEY_CAP_X, L.delX + 3, L.btnY + dk, dockKey);
 
         if (dockButtonHovered(mx, my, L.disX, L.btnY, L.btn)) {
-            graphics.fill(L.disX, L.btnY, L.disX + L.btn, L.btnY + L.btn, 0x44FFCC66);
+            ComputedEditorStyle.drawMenuRow(graphics, L.disX, L.btnY, L.btn, L.btn, true, false);
         }
         graphics.blit(ICON_DISCONNECT, L.disX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
         graphics.drawString(font, "~", L.disX + 3, L.btnY + L.btn - font.lineHeight - 1, 0xFF997755, false);
@@ -5620,7 +5848,7 @@ public class WNodeScreen extends Screen {
         root.put("conns", connTag);
         root.put("sections", sectionsTag);
         root.putBoolean("computedSectionClipboard", true);
-        minecraft.keyboardHandler.setClipboard(Base64.getEncoder().encodeToString(root.toString().getBytes()));
+        minecraft.keyboardHandler.setClipboard(encodeClipboardGraph(root));
         playUiClick(1.03f);
     }
 
@@ -5677,7 +5905,7 @@ public class WNodeScreen extends Screen {
             }
         }
         root.put("conns", connTag);
-        minecraft.keyboardHandler.setClipboard(Base64.getEncoder().encodeToString(root.toString().getBytes()));
+        minecraft.keyboardHandler.setClipboard(encodeClipboardGraph(root));
         playUiClick(1.03f);
     }
 
@@ -5685,7 +5913,8 @@ public class WNodeScreen extends Screen {
         String data = minecraft.keyboardHandler.getClipboard(); if (data == null || data.isEmpty()) return;
         try {
             String decoded = new String(Base64.getDecoder().decode(data));
-            CompoundTag root = TagParser.parseTag(decoded);
+            CompoundTag encodedRoot = TagParser.parseTag(decoded);
+            CompoundTag root = decodeClipboardGraph(encodedRoot);
             ListTag nodesTag = root.getList("nodes", 10);
             ListTag sectionsClipboard = root.getList("sections", 10);
             if (nodesTag.isEmpty() && sectionsClipboard.isEmpty()) {
@@ -5712,6 +5941,9 @@ public class WNodeScreen extends Screen {
                     continue;
                 }
                 WNode newNode = NodeRegistry.createNode(type, nTag.getInt("x") + 10, nTag.getInt("y") + 10);
+                if (newNode == null) {
+                    newNode = dev.propulsionteam.computed.internal.node.MissingNode.fromLegacyTag(type, nTag);
+                }
                 if (newNode != null && !isEditorPeripheralLocked(type)) {
                     newNode.load(nTag);
                     oldToNew.put(oldId, newNode.getId());
@@ -5746,5 +5978,20 @@ public class WNodeScreen extends Screen {
                 playUiClick(1.07f);
             }
         } catch (Exception e) {}
+    }
+
+    private static String encodeClipboardGraph(CompoundTag legacyGraph) {
+        var program = ProgramCodec.decode(legacyGraph, ProgramBridge::isKnownNodeType).program();
+        CompoundTag encoded = ProgramCodec.write(program);
+        return Base64.getEncoder().encodeToString(
+                encoded.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static CompoundTag decodeClipboardGraph(CompoundTag encoded) {
+        if (!encoded.contains("formatVersion") && !encoded.contains(ProgramBridge.PROGRAM_TAG)) {
+            return encoded;
+        }
+        var program = ProgramCodec.decode(encoded, ProgramBridge::isKnownNodeType).program();
+        return ProgramCodec.toLegacyBundleTag(program).getCompound("ComputerGraph");
     }
 }

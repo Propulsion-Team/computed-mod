@@ -1,4 +1,4 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -83,4 +83,7 @@ public abstract class WElement {
      * @return True when this element currently has input focus.
      */
     public boolean isFocused() { return false; }
+
+    /** Clears transient keyboard or drag focus when the editor changes to a non-interactive LOD. */
+    public void clearFocus() {}
 }

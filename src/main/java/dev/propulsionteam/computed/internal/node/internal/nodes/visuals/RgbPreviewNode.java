@@ -1,20 +1,20 @@
-package dev.devce.websnodelib.internal.nodes.visuals;
+package dev.propulsionteam.computed.internal.node.internal.nodes.visuals;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WElement;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 
 public final class RgbPreviewNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("rgb_preview");
-    public static final ResourceLocation MENU = MenuCategories.VISUALS;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("rgb_preview");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.VISUALS;
     public static final Component LABEL = Component.literal("RGB Preview");
 
     public RgbPreviewNode(int x, int y) {

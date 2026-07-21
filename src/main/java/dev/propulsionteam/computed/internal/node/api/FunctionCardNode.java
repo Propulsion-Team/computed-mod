@@ -1,6 +1,6 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WIconStrip;
+import dev.propulsionteam.computed.internal.node.api.elements.WIconStrip;
 import java.util.List;
 import java.util.UUID;
 import net.minecraft.nbt.CompoundTag;
@@ -13,7 +13,7 @@ import net.minecraft.resources.ResourceLocation;
 public class FunctionCardNode extends WNode {
 
     public static final ResourceLocation TYPE_FUNCTION_CARD =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "function_card");
+            ResourceLocation.fromNamespaceAndPath("computed", "function_card");
 
     private static final int MAX_EVAL_DEPTH = 48;
     private static final ThreadLocal<Integer> EVAL_DEPTH = ThreadLocal.withInitial(() -> 0);
@@ -105,6 +105,7 @@ public class FunctionCardNode extends WNode {
     public void syncPinsFromInner(FunctionDefinitionStore store) {
         getInputs().clear();
         getOutputs().clear();
+        markPinSchemaChanged();
         FunctionStartNode start = findStart(innerGraph);
         if (start != null) {
             start.syncPinsFromUiFields();

@@ -1,18 +1,18 @@
-package dev.devce.websnodelib.internal.nodes.sources;
+package dev.propulsionteam.computed.internal.node.internal.nodes.sources;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WGraph;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WSlider;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WGraph;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WSlider;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class TickNode extends WNode {
     public static final ResourceLocation TYPE_ID = WGraph.TICK_NODE_TYPE;
-    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.SOURCES;
     public static final Component LABEL = Component.literal("Tick");
 
     public TickNode(int x, int y) {

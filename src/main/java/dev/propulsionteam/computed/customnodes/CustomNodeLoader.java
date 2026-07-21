@@ -5,7 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.devce.websnodelib.api.WPin;
+import dev.propulsionteam.computed.internal.node.api.WPin;
 import dev.propulsionteam.computed.customnodes.expr.EvalContext;
 import dev.propulsionteam.computed.customnodes.expr.FunctionRegistry;
 import dev.propulsionteam.computed.customnodes.expr.Value;

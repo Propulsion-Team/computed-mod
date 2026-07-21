@@ -1,8 +1,8 @@
-package dev.devce.websnodelib.api;
+package dev.propulsionteam.computed.internal.node.api;
 
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.api.elements.WTextField;
-import dev.devce.websnodelib.internal.MenuCategories;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.api.elements.WTextField;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -17,7 +17,7 @@ public final class PassOnNthRisingEdgeNode extends WNode {
 
     /** Kept for graph save compatibility. */
     public static final ResourceLocation TYPE_ID =
-            ResourceLocation.fromNamespaceAndPath("websnodelib", "pass_every_n");
+            ResourceLocation.fromNamespaceAndPath("computed", "pass_every_n");
 
     private int edgesSeen;
     private boolean prevInHigh;
@@ -82,6 +82,8 @@ public final class PassOnNthRisingEdgeNode extends WNode {
     public CompoundTag save() {
         CompoundTag tag = super.save();
         tag.putInt("EdgesSeen", edgesSeen);
+        tag.putBoolean("PrevInHigh", prevInHigh);
+        tag.putBoolean("PrevResetHigh", prevResetHigh);
         return tag;
     }
 
@@ -91,13 +93,18 @@ public final class PassOnNthRisingEdgeNode extends WNode {
         if (tag.contains("EdgesSeen")) {
             edgesSeen = tag.getInt("EdgesSeen");
         }
+        prevInHigh = tag.getBoolean("PrevInHigh");
+        prevResetHigh = tag.getBoolean("PrevResetHigh");
     }
 
-    public static final ResourceLocation MENU = MenuCategories.SOURCES;
+    public static final ResourceLocation MENU = BuiltinNodeCategories.SOURCES;
     public static final Component LABEL = Component.literal("Pass on Nth rise");
 
     public static void register() {
         NodeRegistry.register(TYPE_ID, PassOnNthRisingEdgeNode::new);
         NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
+
+    @Override
+    public boolean isStateBoundary() { return true; }
 }

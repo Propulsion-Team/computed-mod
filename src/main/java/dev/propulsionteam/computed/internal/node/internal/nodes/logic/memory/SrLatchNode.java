@@ -1,18 +1,18 @@
-package dev.devce.websnodelib.internal.nodes.logic.memory;
+package dev.propulsionteam.computed.internal.node.internal.nodes.logic.memory;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WLabel;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WLabel;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
 public final class SrLatchNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("sr_latch");
-    public static final ResourceLocation MENU = MenuCategories.LOGIC_MEMORY;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("sr_latch");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.LOGIC_MEMORY;
     public static final Component LABEL = Component.literal("SR Latch");
 
     private boolean q;
@@ -40,6 +40,8 @@ public final class SrLatchNode extends WNode {
     public CompoundTag save() {
         CompoundTag tag = super.save();
         tag.putBoolean("Q", q);
+        tag.putBoolean("PrevSet", prevSet);
+        tag.putBoolean("PrevReset", prevReset);
         return tag;
     }
 
@@ -47,10 +49,16 @@ public final class SrLatchNode extends WNode {
     public void load(CompoundTag tag) {
         super.load(tag);
         if (tag.contains("Q")) q = tag.getBoolean("Q");
+        prevSet = tag.getBoolean("PrevSet");
+        prevReset = tag.getBoolean("PrevReset");
+        getOutputs().get(0).setValue(q ? 1.0 : 0.0);
     }
 
     public static void register() {
         NodeRegistry.register(TYPE_ID, SrLatchNode::new);
         NodeMenuRegistry.addNodeEntry(MENU, TYPE_ID, LABEL);
     }
+
+    @Override
+    public boolean isStateBoundary() { return true; }
 }

@@ -1,12 +1,12 @@
-package dev.devce.websnodelib.internal.nodes.visuals;
+package dev.propulsionteam.computed.internal.node.internal.nodes.visuals;
 
-import dev.devce.websnodelib.api.NodeMenuRegistry;
-import dev.devce.websnodelib.api.NodeRegistry;
-import dev.devce.websnodelib.api.WNode;
-import dev.devce.websnodelib.api.elements.WSlider;
-import dev.devce.websnodelib.api.elements.WViewport3D;
-import dev.devce.websnodelib.internal.MenuCategories;
-import dev.devce.websnodelib.internal.WsId;
+import dev.propulsionteam.computed.internal.node.api.NodeMenuRegistry;
+import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
+import dev.propulsionteam.computed.internal.node.api.WNode;
+import dev.propulsionteam.computed.internal.node.api.elements.WSlider;
+import dev.propulsionteam.computed.internal.node.api.elements.WViewport3D;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeCategories;
+import dev.propulsionteam.computed.internal.node.internal.BuiltinNodeIds;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
@@ -14,8 +14,8 @@ import net.minecraft.world.level.block.Blocks;
 import org.joml.Vector3f;
 
 public final class Viewport3DNode extends WNode {
-    public static final ResourceLocation TYPE_ID = WsId.of("3d_preview");
-    public static final ResourceLocation MENU = MenuCategories.VISUALS;
+    public static final ResourceLocation TYPE_ID = BuiltinNodeIds.of("3d_preview");
+    public static final ResourceLocation MENU = BuiltinNodeCategories.VISUALS;
     public static final Component LABEL = Component.literal("3D Viewport");
 
     public Viewport3DNode(int x, int y) {
