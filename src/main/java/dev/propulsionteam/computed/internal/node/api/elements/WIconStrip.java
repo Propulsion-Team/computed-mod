@@ -1,6 +1,7 @@
 package dev.propulsionteam.computed.internal.node.api.elements;
 
 import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -47,6 +48,7 @@ public class WIconStrip extends WElement {
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float partialTick) {
         var font = Minecraft.getInstance().font;
         int cx = x;
+        ComputedEditorStyle.beginTextureIcon(graphics);
         for (int i = 0; i < icons.size(); i++) {
             ResourceLocation icon = icons.get(i);
             graphics.pose().pushPose();

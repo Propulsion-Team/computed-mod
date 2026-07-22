@@ -6,5 +6,9 @@ public interface Component {
         return new MutableComponent(text);
     }
 
+    static MutableComponent translatableWithFallback(String key, String fallback) {
+        return new MutableComponent(fallback);
+    }
+
     String getString();
 }

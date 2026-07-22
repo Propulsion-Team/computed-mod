@@ -2,6 +2,7 @@ package dev.propulsionteam.computed.internal.node.api;
 
 import dev.propulsionteam.computed.api.node.ExecutionPolicy;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -231,11 +232,6 @@ public class WNode {
         // Pathmind-style tinted header with Computed's established green identity.
         graphics.fill(x + 1, y + 1, x + width - 1, y + 14, ComputedEditorTheme.ACCENT_HEADER);
 
-        int borderCol = selected
-                ? ComputedEditorTheme.TEXT_HEADER
-                : (isHovered ? ComputedEditorTheme.BORDER_HIGHLIGHT : ComputedEditorTheme.ACCENT);
-        graphics.renderOutline(x, y, width, height, borderCol);
-
         graphics.drawString(
                 net.minecraft.client.Minecraft.getInstance().font,
                 title,
@@ -276,7 +272,8 @@ public class WNode {
                 left + size,
                 top + size,
                 pin.isConnected() || hover ? color : (color & 0x66FFFFFF));
-        graphics.renderOutline(
+        ComputedEditorStyle.drawPixelOutline(
+                graphics,
                 left,
                 top,
                 size,

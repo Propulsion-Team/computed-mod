@@ -198,6 +198,13 @@ public class ComputerEditorScreen extends WNodeScreen {
             saveBlocked = false;
             return;
         }
+        if (acknowledgedProgram == null) {
+            // A copy-on-load replacement deliberately detached this older in-flight snapshot.
+            // Retry the replacement against the server revision returned by this acknowledgement.
+            saveBlocked = false;
+            clearEditorSaveFailureDiagnostic();
+            return;
+        }
         saveBlocked = true;
         blockedEditorRevision = editorRevision();
         blockedHistoryRevision = editorHistoryRevision();

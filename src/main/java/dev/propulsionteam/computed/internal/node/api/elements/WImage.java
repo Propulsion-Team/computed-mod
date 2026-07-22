@@ -1,6 +1,7 @@
 package dev.propulsionteam.computed.internal.node.api.elements;
 
 import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;
 
@@ -25,6 +26,7 @@ public class WImage extends WElement {
 
     @Override
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float partialTick) {
+        ComputedEditorStyle.beginTextureIcon(graphics);
         graphics.blit(texture, x, y, u, v, width, height, texWidth, texHeight);
     }
 }

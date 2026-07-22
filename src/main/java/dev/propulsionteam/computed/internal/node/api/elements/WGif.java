@@ -1,6 +1,7 @@
 package dev.propulsionteam.computed.internal.node.api.elements;
 
 import dev.propulsionteam.computed.internal.node.api.WElement;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.texture.DynamicTexture;
@@ -87,6 +88,7 @@ public class WGif extends WElement {
             }
         }
 
+        ComputedEditorStyle.beginTextureIcon(graphics);
         graphics.blit(frames.get(currentFrame), x, y, 0, 0, width, height, width, height);
     }
 }

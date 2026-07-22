@@ -1,6 +1,7 @@
 package dev.propulsionteam.computed.internal.node.client.editor;
 
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.Font;
 
 /** Shared one-pixel editor primitives. All coordinates and hit boxes remain owned by callers. */
 public final class ComputedEditorStyle {
@@ -43,9 +44,11 @@ public final class ComputedEditorStyle {
             return;
         }
         graphics.fill(x, y, x + width, y + height, fill);
-        graphics.renderOutline(x, y, width, height, outerBorder);
+        drawPixelOutline(graphics, x, y, width, height, outerBorder);
         if (width > 3 && height > 3) {
-            graphics.renderOutline(x + 1, y + 1, width - 2, height - 2, innerBorder);
+            int inset = pixelStroke(graphics);
+            drawPixelOutline(
+                    graphics, x + inset, y + inset, width - inset * 2, height - inset * 2, innerBorder);
         }
     }
 
@@ -57,7 +60,8 @@ public final class ComputedEditorStyle {
                 x + width,
                 y + height,
                 hovered && !focused ? ComputedEditorTheme.BACKGROUND_SECTION : ComputedEditorTheme.BACKGROUND_INPUT);
-        graphics.renderOutline(
+        drawPixelOutline(
+                graphics,
                 x,
                 y,
                 width,
@@ -73,12 +77,48 @@ public final class ComputedEditorStyle {
                 ? ComputedEditorTheme.BUTTON_ACTIVE
                 : hovered ? ComputedEditorTheme.BUTTON_HOVER : ComputedEditorTheme.BUTTON_BACKGROUND;
         graphics.fill(x, y, x + width, y + height, fill);
-        graphics.renderOutline(
+        drawPixelOutline(
+                graphics,
                 x,
                 y,
                 width,
                 height,
                 active || hovered ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.BORDER_DEFAULT);
+    }
+
+    /** Centers text from the real font metrics instead of caller-specific baseline offsets. */
+    public static void drawCenteredString(
+            GuiGraphics graphics, Font font, String text, int x, int y, int width, int height, int color) {
+        int textX = x + (width - font.width(text)) / 2;
+        int textY = y + (height - font.lineHeight) / 2 + 1;
+        graphics.drawString(font, text, textX, textY, color, false);
+    }
+
+    /**
+     * GuiGraphics texture blits are immediate while fills are buffered inside drawManaged. Flush the
+     * button/background batch before an icon so later buffered chrome cannot paint over the texture.
+     */
+    public static void beginTextureIcon(GuiGraphics graphics) {
+        graphics.flush();
+    }
+
+    /** Returns the graph-space stroke needed to cover at least one physical GUI pixel. */
+    public static int pixelStroke(GuiGraphics graphics) {
+        float scale = Math.abs(graphics.pose().last().pose().m00());
+        return Math.max(1, (int) Math.ceil(1.0f / Math.max(0.001f, scale)));
+    }
+
+    /** Integer-aligned outline whose stroke cannot disappear when graph content is zoomed out. */
+    public static void drawPixelOutline(
+            GuiGraphics graphics, int x, int y, int width, int height, int color) {
+        if (width <= 0 || height <= 0) return;
+        int stroke = Math.min(pixelStroke(graphics), Math.max(1, Math.min(width, height) / 2));
+        int right = x + width;
+        int bottom = y + height;
+        graphics.fill(x, y, right, Math.min(bottom, y + stroke), color);
+        graphics.fill(x, Math.max(y, bottom - stroke), right, bottom, color);
+        graphics.fill(x, y + stroke, Math.min(right, x + stroke), Math.max(y + stroke, bottom - stroke), color);
+        graphics.fill(Math.max(x, right - stroke), y + stroke, right, Math.max(y + stroke, bottom - stroke), color);
     }
 
     public static void drawDangerButton(
@@ -89,7 +129,7 @@ public final class ComputedEditorStyle {
                 x + width,
                 y + height,
                 hovered ? ComputedEditorTheme.DANGER_HOVER : ComputedEditorTheme.DANGER_BACKGROUND);
-        graphics.renderOutline(x, y, width, height, ComputedEditorTheme.STATUS_ERROR);
+        drawPixelOutline(graphics, x, y, width, height, ComputedEditorTheme.STATUS_ERROR);
     }
 
     public static void drawMenuRow(

@@ -13,6 +13,7 @@ import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.internal.node.api.WConnection;
 import dev.propulsionteam.computed.client.ComputedGraphShareCodec;
 import dev.propulsionteam.computed.internal.node.ProgramBridge;
+import dev.propulsionteam.computed.node.program.GraphModel;
 import dev.propulsionteam.computed.node.program.ProgramCodec;
 import dev.propulsionteam.computed.client.editor.DiagnosticTarget;
 import dev.propulsionteam.computed.client.editor.EditorCommand;
@@ -25,7 +26,10 @@ import dev.propulsionteam.computed.client.editor.UniformGridSpatialIndex;
 import dev.propulsionteam.computed.internal.node.client.editor.GraphDiagnosticsController;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
+import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorIcons;
+import dev.propulsionteam.computed.internal.node.client.editor.NodeDescriptionCatalog;
 import dev.propulsionteam.computed.internal.node.client.editor.NodeLodRenderer;
+import dev.propulsionteam.computed.internal.node.client.editor.PointerGestureClassifier;
 import dev.propulsionteam.computed.internal.node.client.editor.WireEditorController;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -57,6 +61,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import org.lwjgl.glfw.GLFW;
@@ -85,24 +90,15 @@ public class WNodeScreen extends Screen {
     private final boolean editorFullscreen = true;
     private static final int FULLSCREEN_BTN = 22;
     private static final int FULLSCREEN_BTN_PAD = 6;
-    private static final int CENTER_BTN_W = 96;
-    private static final int CENTER_BTN_H = 22;
     private static final int ICON_SIZE = 16;
     private static final ResourceLocation ICON_DUPLICATE =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/duplicate.png");
-    private static final ResourceLocation ICON_DELETE =
-            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/delete.png");
     private static final ResourceLocation ICON_DISCONNECT =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/disconnect.png");
     private static final ResourceLocation ICON_MAXIMIZE =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/maximize.png");
     private static final ResourceLocation ICON_MINIMIZE =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/minimize.png");
-    /** Sidebar visible: collapse. Sidebar hidden: expand. */
-    private static final ResourceLocation ICON_SIDEBAR_OPEN =
-            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/sidebar_open.png");
-    private static final ResourceLocation ICON_SIDEBAR_CLOSED =
-            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/sidebar_closed.png");
     /** Functions / library picker (computer editor only when {@link #functionStore} is non-null). */
     private static final ResourceLocation ICON_SCHEMATIC =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/schematic.png");
@@ -116,8 +112,6 @@ public class WNodeScreen extends Screen {
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/folder_multicolor.png");
     private static final ResourceLocation ICON_UPLOAD =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/upload_multicolor.png");
-    private static final ResourceLocation ICON_EXPORT =
-            ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/export.png");
     private static final ResourceLocation ICON_SCROLLER_MULTICOLOR =
             ResourceLocation.fromNamespaceAndPath("computed", "textures/ui/icons/scroller_multicolor.png");
     private static final ResourceLocation ICON_SCROLLER_DISABLED =
@@ -295,6 +289,7 @@ public class WNodeScreen extends Screen {
     private static final int SCROLLER_TEX_H = 15;
     /** Footer hint icons (scaled up from {@link #ICON_SIZE} atlas cells). */
     private static final int LIBRARY_HINT_ICON = 20;
+    private static final int FUNCTION_ICON_COLUMN_W = 36;
     /** Two stacked hint rows + gap (see {@link #drawFunctionLibraryFooterHints}). */
     private static final int LIBRARY_HINT_BLOCK_H = LIBRARY_HINT_ICON * 2 + 8;
     private long lastSectionHeaderClickAtMs = 0;
@@ -347,30 +342,53 @@ public class WNodeScreen extends Screen {
     private static final int MENU_MAX_VISIBLE = 22;
     private static final int MENU_GAP = 2;
 
-    /** Bottom-center action dock when one or more nodes are selected. */
-    private static final int DOCK_BTN = 32;
-    private static final int DOCK_GAP = 8;
-    private static final int DOCK_PAD = 10;
-    private static final int DOCK_BAR_H = 40;
+    private static final int TOP_BAR_H = 24;
+    private static final int TOP_BAR_PADDING = 2;
+    private static final int TOP_BAR_BOTTOM_PADDING = 3;
+    private static final int TOP_BAR_MENU_BUTTON_W = 19;
+    private static final int TOP_BAR_BUTTON_GAP = 2;
+    private static final int CATEGORY_RAIL_W = 40;
+    private static final int CATEGORY_PANEL_W = 160;
+    private static final int CATEGORY_BUTTON = 24;
+    private static final int CATEGORY_ROW_H = 18;
+    private static final int BOTTOM_BAR_H = 0;
+    private static final int FUNCTIONS_BUTTON_W = 88;
+    private static final int SECTIONS_BUTTON_W = 66;
+    private static final int ACTION_BUTTON_SIZE = 24;
+    private static final int ACTION_BUTTON_GAP = 4;
+    private static final int GRID_RIGHT_PADDING = 2;
+    private static final int GRID_BOTTOM_PADDING = 2;
 
-    private record NodeDockLayout(
-            int barX, int barY, int barW, int barH, int btn, int dupX, int delX, int disX, int btnY) {}
+    private boolean categoryRailVisible = true;
+    private int paletteCategoryScroll;
+    private ResourceLocation openPaletteCategory;
+    private String paletteSearch = "";
+    private boolean paletteSearchFocused;
+    private int paletteScroll;
+    private int paletteKeyboardIndex;
+    private BrowseNodeRow pendingPaletteNode;
+    private int paletteDragStartX;
+    private int paletteDragStartY;
+    private boolean paletteDragActivated;
 
-    private NodeDockLayout computeNodeDockLayout() {
-        int py2 = height - viewInset();
-        int barH = DOCK_BAR_H;
-        int barY = py2 - barH - 8;
-        int btn = DOCK_BTN;
-        int gap = DOCK_GAP;
-        int pad = DOCK_PAD;
-        int barW = pad * 2 + btn * 3 + gap * 2;
-        int barX = width / 2 - barW / 2;
-        int btnY = barY + (barH - btn) / 2;
-        int dupX = barX + pad;
-        int delX = dupX + btn + gap;
-        int disX = delX + btn + gap;
-        return new NodeDockLayout(barX, barY, barW, barH, btn, dupX, delX, disX, btnY);
-    }
+    private boolean shareMenuOpen;
+    private Component pendingEditorTooltip;
+    private int pendingEditorTooltipX;
+    private int pendingEditorTooltipY;
+
+    private enum ContextKind { NONE, CANVAS, NODE }
+    private ContextKind contextKind = ContextKind.NONE;
+    private int contextAnchorGraphX;
+    private int contextAnchorGraphY;
+    private WNode contextNode;
+    private int rightPressX = -1;
+    private int rightPressY = -1;
+    private long rightPressAtMs;
+    private boolean rightDragPanning;
+
+    private enum ActionButton { SHARE, CENTER, DUPLICATE, DISCONNECT, DELETE }
+
+    private record ActionDockLayout(int x, int y, int width, List<ActionButton> buttons) {}
 
     private boolean anyNodeSelectedForDock() {
         if (isSearching) {
@@ -730,20 +748,6 @@ public class WNodeScreen extends Screen {
         return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
     }
 
-    private int centerViewBtnX() {
-        return width / 2 - CENTER_BTN_W / 2;
-    }
-
-    private int centerViewBtnY() {
-        return viewInset() + FULLSCREEN_BTN_PAD;
-    }
-
-    private boolean centerViewBtnContains(double mx, double my) {
-        int x = centerViewBtnX();
-        int y = centerViewBtnY();
-        return mx >= x && mx < x + CENTER_BTN_W && my >= y && my < y + CENTER_BTN_H;
-    }
-
     private void requestCameraCenterOnNodes() {
         if (graph.getNodes().isEmpty()) {
             playUiClick(0.82f);
@@ -795,11 +799,11 @@ public class WNodeScreen extends Screen {
     }
 
     private int sectionsSidebarY() {
-        return viewInset() + FULLSCREEN_BTN + FULLSCREEN_BTN_PAD * 2;
+        return viewInset() + TOP_BAR_H + 4;
     }
 
     private int sectionsSidebarH() {
-        return Math.max(80, height - viewInset() * 2 - FULLSCREEN_BTN - FULLSCREEN_BTN_PAD * 3);
+        return Math.max(80, height - viewInset() * 2 - TOP_BAR_H - 8);
     }
 
     private boolean sectionsSidebarContains(double mx, double my) {
@@ -965,17 +969,37 @@ public class WNodeScreen extends Screen {
     }
 
     private int sectionsToggleX() {
-        return width - viewInset() - FULLSCREEN_BTN_PAD - FULLSCREEN_BTN;
+        return width - viewInset() - SECTIONS_BUTTON_W - TOP_BAR_PADDING;
     }
 
     private int sectionsToggleY() {
-        return fullscreenBtnY();
+        return viewInset() + TOP_BAR_PADDING;
+    }
+
+    private int topBarButtonHeight() {
+        return TOP_BAR_H - TOP_BAR_PADDING - TOP_BAR_BOTTOM_PADDING;
+    }
+
+    private int categoryRailToggleX() {
+        return viewInset() + TOP_BAR_PADDING;
+    }
+
+    private int categoryRailToggleY() {
+        return viewInset() + TOP_BAR_PADDING;
+    }
+
+    private boolean categoryRailToggleContains(double mx, double my) {
+        int x = categoryRailToggleX();
+        int y = categoryRailToggleY();
+        return mx >= x && mx < x + TOP_BAR_MENU_BUTTON_W
+                && my >= y && my < y + topBarButtonHeight();
     }
 
     private boolean sectionsToggleContains(double mx, double my) {
         int x = sectionsToggleX();
         int y = sectionsToggleY();
-        return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
+        return mx >= x && mx < x + SECTIONS_BUTTON_W
+                && my >= y && my < y + topBarButtonHeight();
     }
 
     private void beginSectionCreate(int nx, int ny) {
@@ -2052,6 +2076,344 @@ public class WNodeScreen extends Screen {
         return mouseX >= inset && mouseX < width - inset && mouseY >= inset && mouseY < height - inset;
     }
 
+    private int gridRight() {
+        return width - viewInset() - GRID_RIGHT_PADDING;
+    }
+
+    private int gridBottom() {
+        return height - viewInset() - GRID_BOTTOM_PADDING;
+    }
+
+    private int paletteWidth() {
+        return categoryRailVisible ? CATEGORY_RAIL_W + (openPaletteCategory == null ? 0 : CATEGORY_PANEL_W) : 0;
+    }
+
+    private boolean isCanvasPoint(double x, double y) {
+        int inset = viewInset();
+        return isInsideEditorPanel(x, y)
+                && x >= inset + paletteWidth()
+                && y >= inset + TOP_BAR_H
+                && x < gridRight()
+                && y < gridBottom();
+    }
+
+    private record PaletteDisplayRow(Component label, BrowseNodeRow node, int depth) {}
+
+    private List<PaletteDisplayRow> paletteRows() {
+        List<PaletteDisplayRow> rows = new ArrayList<>();
+        if (!paletteSearch.isBlank()) {
+            for (NodeMenuRegistry.MenuEntry entry : NodeMenuRegistry.filterEntries(paletteSearch)) {
+                rows.add(new PaletteDisplayRow(entry.label(), new BrowseNodeRow(entry.nodeType(), entry.label()), 0));
+            }
+            return rows;
+        }
+        if (openPaletteCategory != null) appendPaletteCategory(rows, openPaletteCategory, 0, false);
+        return rows;
+    }
+
+    private void appendPaletteCategory(
+            List<PaletteDisplayRow> rows, ResourceLocation category, int depth, boolean includeHeader) {
+        NodeMenuRegistry.Category definition = NodeMenuRegistry.getCategory(category);
+        if (includeHeader && definition != null) rows.add(new PaletteDisplayRow(definition.title(), null, depth));
+        for (NodeMenuRegistry.MenuEntry entry : NodeMenuRegistry.getEntriesIn(category)) {
+            rows.add(new PaletteDisplayRow(
+                    entry.label(), new BrowseNodeRow(entry.nodeType(), entry.label()), depth + (includeHeader ? 1 : 0)));
+        }
+        for (NodeMenuRegistry.Category child : NodeMenuRegistry.getChildCategories(category)) {
+            appendPaletteCategory(rows, child.id(), depth + 1, true);
+        }
+    }
+
+    private List<NodeMenuRegistry.Category> topPaletteCategories() {
+        return NodeMenuRegistry.getChildCategories(NodeMenuRegistry.ROOT).stream()
+                .filter(category -> submenuHasContent(category.id()))
+                .toList();
+    }
+
+    private int palettePanelTop() { return viewInset() + TOP_BAR_H; }
+    private int palettePanelBottom() { return gridBottom(); }
+
+    private int visiblePaletteCategoryCount() {
+        return Math.max(1, (palettePanelBottom() - palettePanelTop() - 8) / (CATEGORY_BUTTON + 2));
+    }
+
+    private int maxPaletteCategoryScroll(List<NodeMenuRegistry.Category> categories) {
+        return Math.max(0, categories.size() - visiblePaletteCategoryCount());
+    }
+
+    private BrowseNodeRow paletteNodeAt(double mouseX, double mouseY) {
+        if (openPaletteCategory == null || mouseX < viewInset() + CATEGORY_RAIL_W
+                || mouseX >= viewInset() + CATEGORY_RAIL_W + CATEGORY_PANEL_W) return null;
+        int listTop = palettePanelTop() + 24;
+        if (mouseY < listTop || mouseY >= palettePanelBottom()) return null;
+        List<PaletteDisplayRow> rows = paletteRows();
+        int idx = paletteScroll + ((int) mouseY - listTop) / CATEGORY_ROW_H;
+        return idx >= 0 && idx < rows.size() ? rows.get(idx).node() : null;
+    }
+
+    private void renderCategorySidebar(GuiGraphics graphics, int mx, int my) {
+        if (!categoryRailVisible) return;
+        int inset = viewInset();
+        int top = palettePanelTop();
+        int bottom = palettePanelBottom();
+        graphics.fill(inset, top, inset + CATEGORY_RAIL_W, bottom, ComputedEditorTheme.BACKGROUND_SECONDARY);
+        graphics.vLine(inset + CATEGORY_RAIL_W - 1, top, bottom, ComputedEditorTheme.BORDER_DEFAULT);
+        List<NodeMenuRegistry.Category> categories = topPaletteCategories();
+        paletteCategoryScroll = Mth.clamp(paletteCategoryScroll, 0, maxPaletteCategoryScroll(categories));
+        int by = top + 4;
+        int visibleCategories = visiblePaletteCategoryCount();
+        for (int i = 0; i < visibleCategories && paletteCategoryScroll + i < categories.size(); i++) {
+            NodeMenuRegistry.Category category = categories.get(paletteCategoryScroll + i);
+            int bx = inset + (CATEGORY_RAIL_W - CATEGORY_BUTTON) / 2;
+            boolean selected = category.id().equals(openPaletteCategory);
+            boolean hovered = mx >= bx && mx < bx + CATEGORY_BUTTON && my >= by && my < by + CATEGORY_BUTTON;
+            ComputedEditorStyle.drawButton(graphics, bx, by, CATEGORY_BUTTON, CATEGORY_BUTTON, hovered, selected);
+            ComputedEditorIcons.drawCategory(
+                    graphics, category.id(), bx + 5, by + 5,
+                    selected ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.TEXT_SECONDARY);
+            if (hovered) queueEditorTooltip(category.title(), mx, my);
+            by += CATEGORY_BUTTON + 2;
+        }
+        if (categories.size() > visibleCategories) {
+            int trackY = top + 4;
+            int trackH = Math.max(1, bottom - top - 8);
+            int thumbH = Math.max(10, trackH * visibleCategories / categories.size());
+            int thumbY = trackY + (trackH - thumbH) * paletteCategoryScroll
+                    / Math.max(1, categories.size() - visibleCategories);
+            ComputedEditorStyle.drawScrollbar(
+                    graphics, inset + CATEGORY_RAIL_W - 4, trackY, 2, trackH, thumbY, thumbH, false);
+        }
+        if (openPaletteCategory == null) return;
+
+        int x = inset + CATEGORY_RAIL_W;
+        ComputedEditorStyle.drawMenuPanel(graphics, x, top, CATEGORY_PANEL_W, bottom - top);
+        ComputedEditorStyle.drawField(
+                graphics, x + 5, top + 4, CATEGORY_PANEL_W - 10, 16,
+                paletteSearchFocused, mx >= x + 5 && mx < x + CATEGORY_PANEL_W - 5 && my >= top + 4 && my < top + 20);
+        String query = paletteSearch.isEmpty() ? "Search nodes..." : paletteSearch;
+        graphics.drawString(font, query, x + 9, top + 8,
+                paletteSearch.isEmpty() ? ComputedEditorTheme.TEXT_TERTIARY : ComputedEditorTheme.TEXT_PRIMARY, false);
+
+        int listTop = top + 24;
+        int visible = Math.max(1, (bottom - listTop) / CATEGORY_ROW_H);
+        List<PaletteDisplayRow> rows = paletteRows();
+        paletteScroll = Mth.clamp(paletteScroll, 0, Math.max(0, rows.size() - visible));
+        BrowseNodeRow hoveredNode = null;
+        graphics.enableScissor(x + 1, listTop, x + CATEGORY_PANEL_W - 1, bottom - 1);
+        for (int i = 0; i < visible && paletteScroll + i < rows.size(); i++) {
+            PaletteDisplayRow row = rows.get(paletteScroll + i);
+            int absoluteIndex = paletteScroll + i;
+            int ry = listTop + i * CATEGORY_ROW_H;
+            boolean hovered = mx >= x && mx < x + CATEGORY_PANEL_W && my >= ry && my < ry + CATEGORY_ROW_H;
+            boolean keyboardSelected = paletteSearchFocused && absoluteIndex == paletteKeyboardIndex && row.node() != null;
+            if ((hovered || keyboardSelected) && row.node() != null) {
+                ComputedEditorStyle.drawMenuRow(
+                        graphics, x + 1, ry, CATEGORY_PANEL_W - 2, CATEGORY_ROW_H, hovered, keyboardSelected);
+                hoveredNode = row.node();
+            }
+            int color = row.node() == null ? ComputedEditorTheme.ACCENT_MUTED
+                    : isEditorPeripheralLocked(row.node().nodeType())
+                            ? ComputedEditorTheme.STATUS_LOCKED_TEXT : ComputedEditorTheme.TEXT_PRIMARY;
+            String prefix = row.node() == null ? "" : "• ";
+            graphics.drawString(font, prefix + row.label().getString(), x + 7 + row.depth() * 8, ry + 5, color, false);
+        }
+        graphics.disableScissor();
+        if (rows.size() > visible) {
+            int trackH = bottom - listTop - 4;
+            int thumbH = Math.max(10, trackH * visible / rows.size());
+            int thumbY = listTop + 2 + (trackH - thumbH) * paletteScroll / Math.max(1, rows.size() - visible);
+            ComputedEditorStyle.drawScrollbar(graphics, x + CATEGORY_PANEL_W - 5, listTop + 2, 3, trackH, thumbY, thumbH, false);
+        }
+        if (hoveredNode != null) {
+            queueEditorTooltip(
+                    NodeDescriptionCatalog.component(hoveredNode.nodeType(), hoveredNode.label()), mx, my);
+        }
+        if (pendingPaletteNode != null && paletteDragActivated) {
+            int w = Math.max(84, font.width(pendingPaletteNode.label()) + 14);
+            ComputedEditorStyle.drawMenuPanel(graphics, mx + 10, my + 8, w, 20);
+            graphics.drawString(font, pendingPaletteNode.label(), mx + 17, my + 14, ComputedEditorTheme.ACCENT, false);
+        }
+    }
+
+    private boolean handleCategorySidebarClick(double mouseX, double mouseY, int button) {
+        if (!categoryRailVisible || button != 0) return false;
+        int inset = viewInset();
+        int top = palettePanelTop();
+        int bottom = palettePanelBottom();
+        if (mouseX >= inset && mouseX < inset + CATEGORY_RAIL_W && mouseY >= top && mouseY < bottom) {
+            int by = top + 4;
+            List<NodeMenuRegistry.Category> categories = topPaletteCategories();
+            paletteCategoryScroll = Mth.clamp(paletteCategoryScroll, 0, maxPaletteCategoryScroll(categories));
+            int visibleCategories = visiblePaletteCategoryCount();
+            for (int i = 0; i < visibleCategories && paletteCategoryScroll + i < categories.size(); i++) {
+                NodeMenuRegistry.Category category = categories.get(paletteCategoryScroll + i);
+                int bx = inset + (CATEGORY_RAIL_W - CATEGORY_BUTTON) / 2;
+                if (mouseX >= bx && mouseX < bx + CATEGORY_BUTTON && mouseY >= by && mouseY < by + CATEGORY_BUTTON) {
+                    openPaletteCategory = category.id().equals(openPaletteCategory) ? null : category.id();
+                    paletteScroll = 0;
+                    paletteSearchFocused = false;
+                    playUiClick(1.02f);
+                    return true;
+                }
+                by += CATEGORY_BUTTON + 2;
+            }
+            return true;
+        }
+        if (openPaletteCategory == null) return false;
+        int x = inset + CATEGORY_RAIL_W;
+        if (mouseX < x || mouseX >= x + CATEGORY_PANEL_W || mouseY < top || mouseY >= bottom) return false;
+        if (mouseY < top + 22) {
+            paletteSearchFocused = true;
+            return true;
+        }
+        BrowseNodeRow node = paletteNodeAt(mouseX, mouseY);
+        if (node != null) {
+            if (isEditorPeripheralLocked(node.nodeType())) { playUiClick(0.82f); return true; }
+            pendingPaletteNode = node;
+            paletteDragStartX = (int) mouseX;
+            paletteDragStartY = (int) mouseY;
+            paletteDragActivated = false;
+        }
+        return true;
+    }
+
+    private void movePaletteSelection(int direction) {
+        List<PaletteDisplayRow> rows = paletteRows();
+        if (rows.isEmpty()) return;
+        int index = Mth.clamp(paletteKeyboardIndex, 0, rows.size() - 1);
+        for (int attempts = 0; attempts < rows.size(); attempts++) {
+            index = Mth.clamp(index + direction, 0, rows.size() - 1);
+            if (rows.get(index).node() != null) break;
+            if ((index == 0 && direction < 0) || (index == rows.size() - 1 && direction > 0)) break;
+        }
+        paletteKeyboardIndex = index;
+        int visible = Math.max(1, (palettePanelBottom() - (palettePanelTop() + 24)) / CATEGORY_ROW_H);
+        if (paletteKeyboardIndex < paletteScroll) paletteScroll = paletteKeyboardIndex;
+        else if (paletteKeyboardIndex >= paletteScroll + visible) paletteScroll = paletteKeyboardIndex - visible + 1;
+    }
+
+    private void placePaletteKeyboardSelection() {
+        List<PaletteDisplayRow> rows = paletteRows();
+        if (paletteKeyboardIndex < 0 || paletteKeyboardIndex >= rows.size()) return;
+        BrowseNodeRow row = rows.get(paletteKeyboardIndex).node();
+        if (row == null || isEditorPeripheralLocked(row.nodeType())) return;
+        int canvasLeft = viewInset() + paletteWidth();
+        int canvasRight = gridRight();
+        int canvasTop = viewInset() + TOP_BAR_H;
+        int canvasBottom = gridBottom();
+        WNode placed = addNodeAtReturning(row.nodeType(),
+                screenToGraphX((canvasLeft + canvasRight) / 2.0),
+                screenToGraphY((canvasTop + canvasBottom) / 2.0));
+        if (placed != null) {
+            graph.getNodes().forEach(node -> node.setSelected(false));
+            placed.setSelected(true);
+            selectedNode = placed;
+        }
+    }
+
+    private void renderTopBar(GuiGraphics graphics, int mx, int my) {
+        int inset = viewInset();
+        graphics.fill(inset, inset, width - inset, inset + TOP_BAR_H, ComputedEditorTheme.BACKGROUND_SECONDARY);
+        graphics.hLine(inset, width - inset, inset + TOP_BAR_H - 1, ComputedEditorTheme.BORDER_DEFAULT);
+        int menuX = categoryRailToggleX();
+        int menuY = categoryRailToggleY();
+        boolean menuHovered = categoryRailToggleContains(mx, my);
+        ComputedEditorStyle.drawButton(
+                graphics, menuX, menuY, TOP_BAR_MENU_BUTTON_W, topBarButtonHeight(), menuHovered, categoryRailVisible);
+        ComputedEditorIcons.drawMenu(
+                graphics, menuX + 3, menuY + (topBarButtonHeight() - 13) / 2,
+                categoryRailVisible ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.TEXT_SECONDARY);
+        if (menuHovered) {
+            queueEditorTooltip(Component.literal(categoryRailVisible ? "Hide node categories" : "Show node categories"), mx, my);
+        }
+        int sx = sectionsToggleX();
+        int sy = sectionsToggleY();
+        boolean hovered = sectionsToggleContains(mx, my);
+        ComputedEditorStyle.drawButton(
+                graphics, sx, sy, SECTIONS_BUTTON_W, topBarButtonHeight(),
+                hovered, showSectionsSidebar);
+        ComputedEditorStyle.drawCenteredString(
+                graphics, font, "Sections", sx, sy, SECTIONS_BUTTON_W,
+                topBarButtonHeight(),
+                ComputedEditorTheme.TEXT_PRIMARY);
+    }
+
+    private MenuRect currentContextBounds() {
+        int rows = contextKind == ContextKind.NODE ? 5 : 3;
+        int w = contextKind == ContextKind.NODE ? 132 : 142;
+        int h = rows * 18 + 4;
+        int x = Mth.clamp((int) graphToScreenX(contextAnchorGraphX), viewInset() + paletteWidth() + 2,
+                width - viewInset() - w - 2);
+        int y = Mth.clamp((int) graphToScreenY(contextAnchorGraphY), viewInset() + TOP_BAR_H + 2,
+                height - viewInset() - BOTTOM_BAR_H - h - 2);
+        return new MenuRect(x, y, w, h);
+    }
+
+    private void renderContextMenu(GuiGraphics graphics, int mx, int my) {
+        if (contextKind == ContextKind.NONE) return;
+        MenuRect b = currentContextBounds();
+        String[] rows = contextKind == ContextKind.NODE
+                ? new String[] {"Copy", "Duplicate", "Paste", "Disconnect", "Delete"}
+                : new String[] {"Search nodes / categories", "Paste", "New section"};
+        ComputedEditorStyle.drawMenuPanel(graphics, b.x, b.y, b.w, b.h);
+        for (int i = 0; i < rows.length; i++) {
+            int ry = b.y + 2 + i * 18;
+            boolean hover = mx >= b.x && mx < b.x + b.w && my >= ry && my < ry + 18;
+            ComputedEditorStyle.drawMenuRow(graphics, b.x + 1, ry, b.w - 2, 18, hover, false);
+            int color = (contextKind == ContextKind.NODE && i == 4)
+                    ? ComputedEditorTheme.STATUS_ERROR_TEXT : ComputedEditorTheme.TEXT_PRIMARY;
+            graphics.drawString(font, rows[i], b.x + 7, ry + 5, color, false);
+        }
+    }
+
+    private void queueEditorTooltip(Component description, int mouseX, int mouseY) {
+        pendingEditorTooltip = description;
+        pendingEditorTooltipX = mouseX;
+        pendingEditorTooltipY = mouseY;
+    }
+
+    private void renderPendingEditorTooltip(GuiGraphics graphics) {
+        if (pendingEditorTooltip == null) return;
+        int maximumTextWidth = Math.max(80, Math.min(220, width - menuEdgeMargin() * 2 - 12));
+        List<net.minecraft.util.FormattedCharSequence> lines = font.split(pendingEditorTooltip, maximumTextWidth);
+        if (lines.isEmpty()) return;
+        int textWidth = 0;
+        for (net.minecraft.util.FormattedCharSequence line : lines) {
+            textWidth = Math.max(textWidth, font.width(line));
+        }
+        int boxWidth = textWidth + 10;
+        int boxHeight = lines.size() * font.lineHeight + 8;
+        int x = pendingEditorTooltipX + 12;
+        if (x + boxWidth > menuEdgeRight()) x = pendingEditorTooltipX - boxWidth - 12;
+        x = Mth.clamp(x, menuEdgeLeft(), Math.max(menuEdgeLeft(), menuEdgeRight() - boxWidth));
+        int y = pendingEditorTooltipY + 10;
+        if (y + boxHeight > menuEdgeBottom()) y = pendingEditorTooltipY - boxHeight - 10;
+        y = Mth.clamp(y, menuEdgeTop(), Math.max(menuEdgeTop(), menuEdgeBottom() - boxHeight));
+
+        // Commit every menu first, then submit the tooltip background and text in strict painter order.
+        graphics.flush();
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 600);
+        ComputedEditorStyle.drawMenuPanel(graphics, x, y, boxWidth, boxHeight);
+        graphics.flush();
+        int textY = y + 4;
+        for (net.minecraft.util.FormattedCharSequence line : lines) {
+            graphics.drawString(font, line, x + 5, textY, ComputedEditorTheme.TEXT_PRIMARY, false);
+            textY += font.lineHeight;
+        }
+        graphics.flush();
+        graphics.pose().popPose();
+    }
+
+    private void closeTransientEditorChrome() {
+        shareMenuOpen = false;
+        contextKind = ContextKind.NONE;
+        paletteSearchFocused = false;
+        isSearching = false;
+        clearStickyBrowseRoot();
+        clearPendingWireSpawn();
+    }
+
     private static float easeOutCubic(float t) {
         float u = 1.0f - t;
         return 1.0f - u * u * u;
@@ -2086,6 +2448,7 @@ public class WNodeScreen extends Screen {
             wireController.advanceAnimation(deltaTime);
         }
         nodeLodRenderer.beginFrame();
+        pendingEditorTooltip = null;
         showLodInteractionHint = false;
 
         screenAnimation = Math.min(1.0f, screenAnimation + deltaTime / OPEN_DURATION_SEC);
@@ -2102,6 +2465,8 @@ public class WNodeScreen extends Screen {
         int py1 = inset;
         int px2 = width - inset;
         int py2 = height - inset;
+        int graphRight = px2 - GRID_RIGHT_PADDING;
+        int graphBottom = py2 - GRID_BOTTOM_PADDING;
         int panelBg = ((int) (230 * ease) << 24)
                 | (ComputedEditorTheme.BACKGROUND_PRIMARY & 0x00FFFFFF);
         ComputedEditorStyle.drawBeveledPanel(
@@ -2140,7 +2505,7 @@ public class WNodeScreen extends Screen {
             graphics.fill(px1, i, px2, i + 1, 0x0A000000);
         }
 
-        graphics.enableScissor(px1, py1, px2, py2);
+        graphics.enableScissor(px1, py1, graphRight, graphBottom);
 
         graphics.pose().pushPose();
         float sOut = editorContentScale();
@@ -2159,8 +2524,6 @@ public class WNodeScreen extends Screen {
             graphics.fill(s.getX(), s.getY(), s.getX() + s.getWidth(), s.getY() + s.getHeight(), bg);
             int head = sectionHeaderArgb(s, renaming, secSel);
             graphics.fill(s.getX(), s.getY(), s.getX() + s.getWidth(), s.getY() + 16, head);
-            int outline = secSel ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.ACCENT_DARK;
-            graphics.renderOutline(s.getX(), s.getY(), s.getWidth(), s.getHeight(), outline);
             int lx = s.getX() + 4;
             int ly = s.getY() + 4;
             if (renaming) {
@@ -2187,7 +2550,7 @@ public class WNodeScreen extends Screen {
             wireController.invalidateHoverCache();
         }
         GraphRect wireViewport = graphViewport(
-                px1, py1, px2, py2, 36.0 / Math.max(0.1f, editorContentScale()));
+                px1, py1, graphRight, graphBottom, 36.0 / Math.max(0.1f, editorContentScale()));
         wireController.render(
                 graphics,
                 graph,
@@ -2210,7 +2573,7 @@ public class WNodeScreen extends Screen {
                     graphics, sx, sy, pendingWireFrozenTx, pendingWireFrozenTy, 0xAAFFFFFF, 1.5f);
         }
 
-        List<WNode> drawNodes = visibleNodes(px1, py1, px2, py2);
+        List<WNode> drawNodes = visibleNodes(px1, py1, graphRight, graphBottom);
         sortNodesForDrawOrder(drawNodes);
         int z = 0;
         for (WNode node : drawNodes) {
@@ -2225,7 +2588,6 @@ public class WNodeScreen extends Screen {
                 } else if (isEditorPeripheralLocked(node.getTypeId())) {
                     drawEditorPeripheralLockOverlay(graphics, node);
                 }
-                renderNodeDiagnosticOutline(graphics, node);
             } else {
                 node.ensureLayoutUpToDate();
                 NodeLodRenderer.VisualState visualState = nodeLodVisualState(node, gmx, gmy);
@@ -2247,34 +2609,14 @@ public class WNodeScreen extends Screen {
             graphics.pose().popPose();
         }
 
-        if (isSelecting) {
-            float x1 = (float) Math.min(selStartX, selEndX);
-            float y1 = (float) Math.min(selStartY, selEndY);
-            float x2 = (float) Math.max(selStartX, selEndX);
-            float y2 = (float) Math.max(selStartY, selEndY);
-            graphics.pose().pushPose();
-            graphics.pose().translate(0, 0, 2000);
-            graphics.fill((int) x1, (int) y1, (int) x2, (int) y2, 0x3300FF88);
-            graphics.renderOutline((int) x1, (int) y1, (int) (x2 - x1), (int) (y2 - y1), 0xFF00FF88);
-            graphics.pose().popPose();
-        }
-        if (isCreatingSection) {
-            int sx = Math.min(sectionCreateStartX, sectionCreateEndX);
-            int sy = Math.min(sectionCreateStartY, sectionCreateEndY);
-            int ex = Math.max(sectionCreateStartX, sectionCreateEndX);
-            int ey = Math.max(sectionCreateStartY, sectionCreateEndY);
-            graphics.pose().pushPose();
-            graphics.pose().translate(0, 0, 2000);
-            graphics.fill(sx, sy, ex, ey, 0x332D66FF);
-            graphics.renderOutline(sx, sy, ex - sx, ey - sy, 0xFF74A0FF);
-            graphics.pose().popPose();
-        }
-
         if (detailLevel == EditorDetailLevel.FULL) {
             renderParticles(graphics, deltaTime);
         }
 
         graphics.pose().popPose();
+
+        renderScreenSpaceGraphOutlines(graphics, drawNodes, detailLevel, gmx, gmy);
+        renderScreenSpaceDragRectangles(graphics);
 
         if (detailLevel != EditorDetailLevel.FULL) {
             graphics.pose().pushPose();
@@ -2285,7 +2627,16 @@ public class WNodeScreen extends Screen {
             graphics.pose().popPose();
         }
 
+        // Commit graph-space bodies and LOD labels before screen-space menus. This is an explicit
+        // painter-order boundary between graph render types and editor chrome.
+        graphics.flush();
+
         graphics.disableScissor();
+
+        // The final graph pixel aligns with the top-bar controls; the remaining two pixels are
+        // deliberate breathing room inside the outer beveled panel.
+        graphics.vLine(graphRight - 1, py1 + TOP_BAR_H, graphBottom - 1, ComputedEditorTheme.BORDER_DEFAULT);
+        graphics.hLine(px1, graphRight - 1, graphBottom - 1, ComputedEditorTheme.BORDER_DEFAULT);
 
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 2500);
@@ -2293,11 +2644,11 @@ public class WNodeScreen extends Screen {
         renderNodeActionDock(graphics, mouseX, mouseY, ease);
         renderLodInteractionHint(graphics, detailLevel);
 
-        renderCenterViewButton(graphics, mouseX, mouseY, ease);
         renderSectionsSidebar(graphics, mouseX, mouseY, ease);
-        renderSchematicToolbar(graphics, mouseX, mouseY, ease);
-        renderShareToolbar(graphics, mouseX, mouseY, ease);
         renderDiagnosticsPanel(graphics, mouseX, mouseY, ease);
+        renderTopBar(graphics, mouseX, mouseY);
+        renderCategorySidebar(graphics, mouseX, mouseY);
+        renderSchematicToolbar(graphics, mouseX, mouseY, ease);
 
         if (isSearching) {
             rebuildSearchHitRows();
@@ -2312,10 +2663,15 @@ public class WNodeScreen extends Screen {
         }
 
         renderSectionColorPickerOverlay(graphics);
+        renderContextMenu(graphics, mouseX, mouseY);
+        renderPendingEditorTooltip(graphics);
 
         graphics.pose().popPose();
 
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 5000);
         renderItemPickerOverlay(graphics);
+        graphics.pose().popPose();
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 9000);
         renderExportDialog(graphics);
@@ -2339,7 +2695,7 @@ public class WNodeScreen extends Screen {
     }
 
     private int diagnosticsIndicatorY() {
-        return height - viewInset() - DIAGNOSTICS_INDICATOR_H - FULLSCREEN_BTN_PAD;
+        return height - viewInset() - BOTTOM_BAR_H - DIAGNOSTICS_INDICATOR_H - FULLSCREEN_BTN_PAD;
     }
 
     private boolean diagnosticsIndicatorContains(double mouseX, double mouseY) {
@@ -2425,19 +2781,61 @@ public class WNodeScreen extends Screen {
         return key.length() <= 8 ? key : key.substring(0, 8);
     }
 
-    private void renderNodeDiagnosticOutline(GuiGraphics graphics, WNode node) {
-        List<EditorDiagnostic> diagnostics =
-                diagnosticsController.diagnostics().forTarget(DiagnosticTarget.node(node.getId()));
-        if (diagnostics.isEmpty()) {
-            return;
-        }
-        boolean error = diagnostics.stream()
-                .anyMatch(diagnostic -> diagnostic.severity() == EditorDiagnostic.Severity.ERROR);
-        int color = error ? ComputedEditorTheme.STATUS_ERROR : ComputedEditorTheme.STATUS_WARNING;
+    private void renderScreenSpaceGraphOutlines(
+            GuiGraphics graphics, List<WNode> drawNodes, EditorDetailLevel detailLevel, int graphMouseX, int graphMouseY) {
         graphics.pose().pushPose();
-        graphics.pose().translate(0, 0, 8);
-        graphics.renderOutline(
-                node.getX() - 2, node.getY() - 2, node.getWidth() + 4, node.getHeight() + 4, color);
+        graphics.pose().translate(0, 0, 2000);
+        for (WGraph.WSection section : graph.getSections()) {
+            int left = Mth.floor(graphToScreenX(section.getX()));
+            int top = Mth.floor(graphToScreenY(section.getY()));
+            int right = Mth.ceil(graphToScreenX(section.getX() + section.getWidth()));
+            int bottom = Mth.ceil(graphToScreenY(section.getY() + section.getHeight()));
+            int color = section.getId().equals(selectedSectionId)
+                    ? ComputedEditorTheme.ACCENT : ComputedEditorTheme.ACCENT_DARK;
+            graphics.renderOutline(left, top, Math.max(1, right - left), Math.max(1, bottom - top), color);
+        }
+        if (detailLevel == EditorDetailLevel.FULL) {
+            for (WNode node : drawNodes) {
+                NodeLodRenderer.VisualState state = nodeLodVisualState(node, graphMouseX, graphMouseY);
+                int color;
+                if (state.diagnosticError() || state.diagnosticWarning() || state.peripheralLocked()
+                        || node == draggingNode || state.selected()) {
+                    color = ComputedEditorTheme.nodeOutline(
+                            state.selected(), node == draggingNode, state.diagnosticError(),
+                            state.diagnosticWarning(), state.peripheralLocked());
+                } else {
+                    color = state.hovered() ? ComputedEditorTheme.BORDER_HIGHLIGHT : ComputedEditorTheme.ACCENT;
+                }
+                int left = Mth.floor(graphToScreenX(node.getX()));
+                int top = Mth.floor(graphToScreenY(node.getY()));
+                int right = Mth.ceil(graphToScreenX(node.getX() + node.getWidth()));
+                int bottom = Mth.ceil(graphToScreenY(node.getY() + node.getHeight()));
+                graphics.renderOutline(left, top, Math.max(1, right - left), Math.max(1, bottom - top), color);
+            }
+        }
+        graphics.pose().popPose();
+    }
+
+    private void renderScreenSpaceDragRectangles(GuiGraphics graphics) {
+        if (!isSelecting && !isCreatingSection) return;
+        double graphLeft = isSelecting
+                ? Math.min(selStartX, selEndX) : Math.min(sectionCreateStartX, sectionCreateEndX);
+        double graphTop = isSelecting
+                ? Math.min(selStartY, selEndY) : Math.min(sectionCreateStartY, sectionCreateEndY);
+        double graphRight = isSelecting
+                ? Math.max(selStartX, selEndX) : Math.max(sectionCreateStartX, sectionCreateEndX);
+        double graphBottom = isSelecting
+                ? Math.max(selStartY, selEndY) : Math.max(sectionCreateStartY, sectionCreateEndY);
+        int left = Mth.floor(graphToScreenX(graphLeft));
+        int top = Mth.floor(graphToScreenY(graphTop));
+        int right = Mth.ceil(graphToScreenX(graphRight));
+        int bottom = Mth.ceil(graphToScreenY(graphBottom));
+        int fill = isSelecting ? 0x3300FF88 : 0x332D66FF;
+        int border = isSelecting ? 0xFF00FF88 : 0xFF74A0FF;
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 2200);
+        graphics.fill(left, top, right, bottom, fill);
+        graphics.renderOutline(left, top, Math.max(1, right - left), Math.max(1, bottom - top), border);
         graphics.pose().popPose();
     }
 
@@ -2493,21 +2891,6 @@ public class WNodeScreen extends Screen {
     }
 
     private void renderSectionsSidebar(GuiGraphics graphics, int mx, int my, float ease) {
-        int tx = sectionsToggleX();
-        int ty = sectionsToggleY();
-        ComputedEditorStyle.drawButton(
-                graphics,
-                tx,
-                ty,
-                FULLSCREEN_BTN,
-                FULLSCREEN_BTN,
-                mouseX >= tx && mouseX < tx + FULLSCREEN_BTN && mouseY >= ty && mouseY < ty + FULLSCREEN_BTN,
-                showSectionsSidebar);
-        ResourceLocation sidebarIcon = showSectionsSidebar ? ICON_SIDEBAR_OPEN : ICON_SIDEBAR_CLOSED;
-        int six = tx + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        int siy = ty + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        graphics.blit(sidebarIcon, six, siy, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-
         if (!showSectionsSidebar) {
             return;
         }
@@ -2540,23 +2923,12 @@ public class WNodeScreen extends Screen {
         }
     }
 
-    private void renderCenterViewButton(GuiGraphics graphics, int mx, int my, float ease) {
-        int x = centerViewBtnX();
-        int y = centerViewBtnY();
-        boolean hov = centerViewBtnContains(mx, my);
-        ComputedEditorStyle.drawButton(graphics, x, y, CENTER_BTN_W, CENTER_BTN_H, hov, false);
-        String label = "Center View";
-        int tx = x + (CENTER_BTN_W - font.width(label)) / 2;
-        int ty = y + (CENTER_BTN_H - font.lineHeight) / 2 + 1;
-        graphics.drawString(font, label, tx, ty, ComputedEditorTheme.TEXT_PRIMARY, false);
-    }
-
     private int schematicBtnX() {
-        return viewInset() + FULLSCREEN_BTN_PAD;
+        return categoryRailToggleX() + TOP_BAR_MENU_BUTTON_W + TOP_BAR_BUTTON_GAP;
     }
 
     private int schematicBtnY() {
-        return viewInset() + FULLSCREEN_BTN_PAD;
+        return viewInset() + TOP_BAR_PADDING;
     }
 
     private boolean schematicBtnContains(double mx, double my) {
@@ -2565,35 +2937,8 @@ public class WNodeScreen extends Screen {
         }
         int x = schematicBtnX();
         int y = schematicBtnY();
-        return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
-    }
-
-    private int shareExportBtnX() {
-        return schematicBtnX() + FULLSCREEN_BTN + 4;
-    }
-
-    private int shareExportBtnY() {
-        return schematicBtnY();
-    }
-
-    private int shareImportBtnX() {
-        return shareExportBtnX() + FULLSCREEN_BTN + 4;
-    }
-
-    private int shareImportBtnY() {
-        return schematicBtnY();
-    }
-
-    private boolean shareExportBtnContains(double mx, double my) {
-        int x = shareExportBtnX();
-        int y = shareExportBtnY();
-        return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
-    }
-
-    private boolean shareImportBtnContains(double mx, double my) {
-        int x = shareImportBtnX();
-        int y = shareImportBtnY();
-        return mx >= x && mx < x + FULLSCREEN_BTN && my >= y && my < y + FULLSCREEN_BTN;
+        return mx >= x && mx < x + FUNCTIONS_BUTTON_W
+                && my >= y && my < y + topBarButtonHeight();
     }
 
     private void postShareStatus(boolean error, String key, Object... args) {
@@ -2665,7 +3010,7 @@ public class WNodeScreen extends Screen {
     }
 
     /**
-     * Padding + title + “New” + fixed-height definitions viewport + open-folder + import row (matches
+     * Padding + title + “New” + fixed-height definitions viewport + open-folder + import (matches
      * {@link #renderSchematicToolbar}).
      */
     private int schematicPickerH() {
@@ -2684,7 +3029,7 @@ public class WNodeScreen extends Screen {
     }
 
     private int functionPickerDefsStartY(int panelTop) {
-        return panelTop + 6 + functionPickerPlacedSectionHeight() + FUNCTION_LIB_TITLE_H + menuRowHeight();
+        return functionPickerNewRowY(panelTop) + menuRowHeight();
     }
 
     private int functionPickerFolderRowY(int panelTop) {
@@ -2756,6 +3101,10 @@ public class WNodeScreen extends Screen {
         return functionPickerFolderRowY(panelTop) + menuRowHeight();
     }
 
+    private int functionPickerNewRowY(int panelTop) {
+        return panelTop + 6 + functionPickerPlacedSectionHeight() + FUNCTION_LIB_TITLE_H;
+    }
+
     private int schematicPickerX() {
         int px = schematicBtnX();
         int pw = schematicPickerW();
@@ -2768,7 +3117,7 @@ public class WNodeScreen extends Screen {
     }
 
     private int schematicPickerY() {
-        int py = schematicBtnY() + FULLSCREEN_BTN + 4;
+        int py = viewInset() + TOP_BAR_H + 2;
         int ph = schematicPickerH();
         int et = menuEdgeTop();
         int eb = menuEdgeBottom();
@@ -2916,6 +3265,45 @@ public class WNodeScreen extends Screen {
         }
     }
 
+    private int functionIconColumnX(int panelX) {
+        return panelX + 8;
+    }
+
+    private int functionTextColumnX(int panelX) {
+        return functionIconColumnX(panelX) + FUNCTION_ICON_COLUMN_W + 6;
+    }
+
+    private void renderFunctionImportRow(
+            GuiGraphics graphics, int mx, int my, int px, int rowY, int pw, int rowH) {
+        boolean hovered = mx >= px && mx < px + pw && my >= rowY && my < rowY + rowH;
+        int fileCount = functionDiscImportFiles.size();
+        boolean enabled = clientNestedFunctionsDirectory() != null;
+        if ((hovered || functionImportSubmenuOpen) && enabled) {
+            ComputedEditorStyle.drawMenuRow(
+                    graphics, px, rowY, pw, rowH, hovered, functionImportSubmenuOpen);
+        }
+        int iconX = functionIconColumnX(px) + (FUNCTION_ICON_COLUMN_W - ICON_SIZE) / 2;
+        int iconY = rowY + (rowH - ICON_SIZE) / 2;
+        float tint = enabled ? 1.0f : 0.35f;
+        ComputedEditorStyle.beginTextureIcon(graphics);
+        graphics.setColor(tint, tint, tint, 1.0f);
+        graphics.blit(ICON_UPLOAD, iconX, iconY, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+        graphics.setColor(1.0f, 1.0f, 1.0f, 1.0f);
+        int textY = rowY + (rowH - font.lineHeight) / 2 + 1;
+        graphics.drawString(
+                font,
+                "Import…",
+                functionTextColumnX(px),
+                textY,
+                enabled ? ComputedEditorTheme.ACCENT_MUTED : ComputedEditorTheme.TEXT_DISABLED,
+                false);
+        if (enabled && fileCount > 0) {
+            ComputedEditorIcons.drawChevron(
+                    graphics, px + pw - 12, rowY + (rowH - 12) / 2,
+                    ComputedEditorTheme.TEXT_SECONDARY);
+        }
+    }
+
     private void renderSchematicToolbar(GuiGraphics graphics, int mx, int my, float ease) {
         if (functionStore == null) {
             return;
@@ -2923,10 +3311,20 @@ public class WNodeScreen extends Screen {
         int tx = schematicBtnX();
         int ty = schematicBtnY();
         boolean hov = schematicBtnContains(mx, my);
-        ComputedEditorStyle.drawButton(graphics, tx, ty, FULLSCREEN_BTN, FULLSCREEN_BTN, hov, functionPickerOpen);
-        int six = tx + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        int siy = ty + (FULLSCREEN_BTN - ICON_SIZE) / 2;
+        int buttonHeight = topBarButtonHeight();
+        ComputedEditorStyle.drawButton(
+                graphics, tx, ty, FUNCTIONS_BUTTON_W, buttonHeight, hov, functionPickerOpen);
+        int six = tx + 4;
+        int siy = ty + (buttonHeight - ICON_SIZE) / 2;
+        ComputedEditorStyle.beginTextureIcon(graphics);
         graphics.blit(ICON_SCHEMATIC, six, siy, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+        graphics.drawString(
+                font,
+                "Functions",
+                six + ICON_SIZE + 4,
+                ty + (buttonHeight - font.lineHeight) / 2 + 1,
+                ComputedEditorTheme.TEXT_PRIMARY,
+                false);
 
         if (functionPickerOpen) {
             int px = schematicPickerX();
@@ -2960,14 +3358,14 @@ public class WNodeScreen extends Screen {
                 contentY += 4;
             }
             graphics.drawString(font, "Functions", px + 6, contentY, ComputedEditorTheme.TEXT_HEADER, false);
-            int ry = contentY + FUNCTION_LIB_TITLE_H;
+            int ry = functionPickerNewRowY(py);
             boolean hNew = mx >= px && mx < px + pw && my >= ry && my < ry + rh;
             int newColor = hNew ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.TEXT_SECONDARY;
             if (hNew) {
                 ComputedEditorStyle.drawMenuRow(graphics, px, ry, pw, rh, true, false);
             }
             graphics.drawString(font, "+ New function", px + 6, ry + 2, newColor, false);
-            ry += rh;
+            ry = functionPickerDefsStartY(py);
             List<FunctionDefinitionStore.Definition> defs =
                     new ArrayList<>(functionStore.definitionsInOrder());
             int defsTop = ry;
@@ -3038,16 +3436,17 @@ public class WNodeScreen extends Screen {
             if (hFolder) {
                 ComputedEditorStyle.drawMenuRow(graphics, px, folderY, pw, rh, true, false);
             }
-            int ic = px + 8;
+            int ic = functionIconColumnX(px) + (FUNCTION_ICON_COLUMN_W - ICON_SIZE) / 2;
             int iy = folderY + (rh - ICON_SIZE) / 2;
             float ft = clientNestedFunctionsDirectory() != null ? 1f : 0.35f;
+            ComputedEditorStyle.beginTextureIcon(graphics);
             graphics.setColor(ft, ft, ft, ease);
             graphics.blit(ICON_FOLDER, ic, iy, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
             graphics.setColor(1f, 1f, 1f, 1f);
             graphics.drawString(
                     font,
                     "Open folder",
-                    px + 8 + ICON_SIZE + 4,
+                    functionTextColumnX(px),
                     folderY + (rh - font.lineHeight) / 2 + 1,
                     clientNestedFunctionsDirectory() != null
                             ? ComputedEditorTheme.TEXT_PRIMARY
@@ -3055,33 +3454,8 @@ public class WNodeScreen extends Screen {
                     false);
 
             int impY = functionPickerImportRowY(py);
-            boolean hImp = mx >= px && mx < px + pw && my >= impY && my < impY + rh;
-            int nf = functionDiscImportFiles.size();
-            boolean diskOk = clientNestedFunctionsDirectory() != null;
-            if ((hImp || functionImportSubmenuOpen) && diskOk) {
-                ComputedEditorStyle.drawMenuRow(graphics, px, impY, pw, rh, hImp, functionImportSubmenuOpen);
-            }
-            graphics.drawString(
-                    font,
-                    "Import…",
-                    px + 6,
-                    impY + 2,
-                    diskOk ? ComputedEditorTheme.ACCENT_MUTED : ComputedEditorTheme.TEXT_DISABLED,
-                    false);
-            String subHint =
-                    !diskOk ? "(save path N/A)" : nf == 0 ? "(no .nbt)" : nf + " file" + (nf == 1 ? "" : "s");
-            int subColor = diskOk ? ComputedEditorTheme.TEXT_SECONDARY : ComputedEditorTheme.TEXT_DISABLED;
-            graphics.drawString(font, subHint, px + 56, impY + 2, subColor, false);
-            String chevron = (!diskOk || nf == 0) ? "" : "›";
-            if (!chevron.isEmpty()) {
-                graphics.drawString(
-                        font,
-                        chevron,
-                        px + pw - font.width(chevron) - 6,
-                        impY + 2,
-                        ComputedEditorTheme.TEXT_SECONDARY,
-                        false);
-            }
+            renderFunctionImportRow(graphics, mx, my, px, impY, pw, rh);
+
             drawFunctionLibraryFooterHints(graphics, px, py + ph - LIBRARY_HINT_BLOCK_H);
             renderFunctionImportFlyout(graphics, mx, my);
         }
@@ -3089,23 +3463,6 @@ public class WNodeScreen extends Screen {
         if (nestedFunctionDiskToolbarVisible()) {
             renderNestedFunctionDiskToolbar(graphics, mx, my, ease);
         }
-    }
-
-    private void renderShareToolbar(GuiGraphics graphics, int mx, int my, float ease) {
-        int ex = shareExportBtnX();
-        int ey = shareExportBtnY();
-        int ix = shareImportBtnX();
-        int iy = shareImportBtnY();
-        boolean hExport = shareExportBtnContains(mx, my);
-        boolean hImport = shareImportBtnContains(mx, my);
-        ComputedEditorStyle.drawButton(graphics, ex, ey, FULLSCREEN_BTN, FULLSCREEN_BTN, hExport, false);
-        ComputedEditorStyle.drawButton(graphics, ix, iy, FULLSCREEN_BTN, FULLSCREEN_BTN, hImport, false);
-        int exi = ex + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        int eyi = ey + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        int ixi = ix + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        int iyi = iy + (FULLSCREEN_BTN - ICON_SIZE) / 2;
-        graphics.blit(ICON_EXPORT, exi, eyi, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        graphics.blit(ICON_UPLOAD, ixi, iyi, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
     }
 
     private void renderImportFromStringDialog(GuiGraphics graphics) {
@@ -3256,6 +3613,7 @@ public class WNodeScreen extends Screen {
 
     /** Scales a 16×16 UI tile to {@code drawPx} for key caps and small icons. */
     private void blitScaledHintTile(GuiGraphics graphics, ResourceLocation icon, int x, int y, int drawPx) {
+        ComputedEditorStyle.beginTextureIcon(graphics);
         graphics.pose().pushPose();
         graphics.pose().translate(x, y, 0);
         float s = drawPx / (float) ICON_SIZE;
@@ -3298,31 +3656,34 @@ public class WNodeScreen extends Screen {
         int rowStride = LIBRARY_HINT_ICON + 4;
         int tilePx = ICON_SIZE;
         int keyGap = 2;
-        int iconStripW = tilePx + keyGap + tilePx;
-        int hintTextX = x + iconStripW + 6;
+        int iconStripX = functionIconColumnX(x);
+        int pairedWidth = tilePx + keyGap + tilePx;
+        int pairedX = iconStripX + (FUNCTION_ICON_COLUMN_W - pairedWidth) / 2;
+        int hintTextX = functionTextColumnX(x);
         int iconY = y + (LIBRARY_HINT_ICON - tilePx) / 2;
         int ty1 = y + (LIBRARY_HINT_ICON - font.lineHeight) / 2 + 1;
-        blitScaledHintTile(graphics, KEY_CAP_ALT, x, iconY, tilePx);
-        blitScaledHintTile(graphics, ICON_UI_CLICK, x + tilePx + keyGap, iconY, tilePx);
+        ComputedEditorStyle.beginTextureIcon(graphics);
+        blitScaledHintTile(graphics, KEY_CAP_ALT, pairedX, iconY, tilePx);
+        blitScaledHintTile(graphics, ICON_UI_CLICK, pairedX + tilePx + keyGap, iconY, tilePx);
         graphics.drawString(font, "Place card", hintTextX, ty1, hintColor, false);
         int y2 = y + rowStride;
         int iconY2 = y2 + (LIBRARY_HINT_ICON - tilePx) / 2;
         int ty2 = y2 + (LIBRARY_HINT_ICON - font.lineHeight) / 2 + 1;
-        int doubleClickX = x + (iconStripW - tilePx) / 2;
+        int doubleClickX = iconStripX + (FUNCTION_ICON_COLUMN_W - tilePx) / 2;
         blitScaledHintTile(graphics, ICON_UI_DOUBLE_CLICK, doubleClickX, iconY2, tilePx);
         graphics.drawString(font, "Rename", hintTextX, ty2, hintColor, false);
     }
 
     private boolean nestedFunctionDiskToolbarVisible() {
-        return functionStore != null && isEditingNestedFunction();
+        return functionStore != null && isEditingNestedFunction() && functionPickerOpen;
     }
 
     private int nestedDiskToolbarY() {
-        return schematicBtnY() + FULLSCREEN_BTN + 6;
+        return Math.min(menuEdgeBottom() - FULLSCREEN_BTN, schematicPickerY() + schematicPickerH() + 3);
     }
 
     private int nestedDiskToolbarBtnX(int index) {
-        return schematicBtnX() + index * (FULLSCREEN_BTN + 4);
+        return schematicPickerX() + index * (FULLSCREEN_BTN + 4);
     }
 
     private boolean nestedDiskToolbarBtnContains(double mx, double my, int index) {
@@ -3496,9 +3857,19 @@ public class WNodeScreen extends Screen {
         if (functionImportSubmenuOpen && !onImportRow) {
             functionImportSubmenuOpen = false;
         }
-        int placedH = functionPickerPlacedSectionHeight();
-        int titleEnd = py + 6 + placedH + FUNCTION_LIB_TITLE_H;
-        int newTop = titleEnd;
+        if (onImportRow) {
+            commitLibraryFunctionRename();
+            if (clientNestedFunctionsDirectory() == null) {
+                playUiClick(0.85f);
+                return;
+            }
+            refreshFunctionDiscFileList();
+            functionImportSubmenuOpen = !functionImportSubmenuOpen;
+            if (functionImportSubmenuOpen) functionDiscImportListScroll = 0;
+            playUiClick(functionImportSubmenuOpen ? 1.02f : 0.98f);
+            return;
+        }
+        int newTop = functionPickerNewRowY(py);
         if (mouseY >= newTop && mouseY < newTop + rh) {
             commitLibraryFunctionRename();
             functionPickerOpen = false;
@@ -3507,7 +3878,7 @@ public class WNodeScreen extends Screen {
             playUiClick(1.02f);
             return;
         }
-        int defsTop = newTop + rh;
+        int defsTop = functionPickerDefsStartY(py);
         int defsViewportH = functionPickerDefsViewportHeight();
         if (mouseY >= defsTop && mouseY < defsTop + defsViewportH) {
             int row = (int) ((mouseY - defsTop) / FUNCTION_LIB_NAME_ROW_H);
@@ -3545,19 +3916,6 @@ public class WNodeScreen extends Screen {
             commitLibraryFunctionRename();
             openNestedFunctionsFolder();
             return;
-        }
-        if (onImportRow) {
-            commitLibraryFunctionRename();
-            if (clientNestedFunctionsDirectory() == null) {
-                playUiClick(0.85f);
-                return;
-            }
-            refreshFunctionDiscFileList();
-            functionImportSubmenuOpen = !functionImportSubmenuOpen;
-            if (functionImportSubmenuOpen) {
-                functionDiscImportListScroll = 0;
-            }
-            playUiClick(functionImportSubmenuOpen ? 1.02f : 0.98f);
         }
     }
 
@@ -4070,7 +4428,7 @@ public class WNodeScreen extends Screen {
 
     private void renderSearchMenu(GuiGraphics graphics) {
         graphics.pose().pushPose();
-        graphics.pose().translate(0, 0, 5000);
+        graphics.pose().translate(0, 0, 200);
 
         if (!searchQuery.trim().isEmpty()) {
             renderSearchFlatMenu(graphics);
@@ -4164,6 +4522,10 @@ public class WNodeScreen extends Screen {
             boolean locked = isEditorPeripheralLocked(row.nodeType());
             int rowColor = locked ? ComputedEditorTheme.STATUS_LOCKED_TEXT : color;
             graphics.drawString(font, row.label(), menuX + 6, ry + 1, rowColor, false);
+            if (hovered) {
+                queueEditorTooltip(
+                        NodeDescriptionCatalog.component(row.nodeType(), row.label()), mouseX, mouseY);
+            }
         }
         if (searchHitRows.size() > visible) {
             graphics.drawString(
@@ -4214,6 +4576,9 @@ public class WNodeScreen extends Screen {
                 graphics.drawString(font, n.label(), rx + 6, y0 + 1, rowColor, false);
             }
             graphics.disableScissor();
+            if (hovered && row instanceof BrowseNodeRow n) {
+                queueEditorTooltip(NodeDescriptionCatalog.component(n.nodeType(), n.label()), mx, my);
+            }
         }
     }
 
@@ -4398,8 +4763,76 @@ public class WNodeScreen extends Screen {
         return graph.getNode(id);
     }
 
+    private boolean handleContextMenuClick(double mouseX, double mouseY, int button) {
+        if (contextKind == ContextKind.NONE) return false;
+        if (button != 0) { contextKind = ContextKind.NONE; return true; }
+        MenuRect b = currentContextBounds();
+        if (!b.contains((int) mouseX, (int) mouseY)) { contextKind = ContextKind.NONE; return true; }
+        int row = ((int) mouseY - b.y - 2) / 18;
+        if (contextKind == ContextKind.CANVAS) {
+            if (row == 0) {
+                isSearching = true;
+                searchQuery = "";
+                menuFlyoutPath.clear();
+                menuAnchorNx = contextAnchorGraphX;
+                menuAnchorNy = contextAnchorGraphY;
+                menuX = b.x;
+                menuY = b.y;
+            } else if (row == 1) pasteFromClipboard();
+            else if (row == 2) beginSectionCreate(contextAnchorGraphX, contextAnchorGraphY);
+        } else if (contextNode != null) {
+            if (!contextNode.isSelected()) {
+                graph.getNodes().forEach(node -> node.setSelected(false));
+                contextNode.setSelected(true);
+                selectedNode = contextNode;
+            }
+            if (row == 0) copySelectedNodesToClipboard();
+            else if (row == 1) duplicateSelectedNodes();
+            else if (row == 2) pasteFromClipboard();
+            else if (row == 3) disconnectSelectedNodes();
+            else if (row == 4) deleteSelectedNodes();
+        }
+        contextKind = ContextKind.NONE;
+        return true;
+    }
+
+    private void openContextMenuAt(int sx, int sy) {
+        contextAnchorGraphX = screenToGraphX(sx);
+        contextAnchorGraphY = screenToGraphY(sy);
+        contextNode = null;
+        for (WNode node : nodesAtGraphPoint(contextAnchorGraphX, contextAnchorGraphY, true)) {
+            if (contextAnchorGraphX >= node.getX() && contextAnchorGraphX <= node.getX() + node.getWidth()
+                    && contextAnchorGraphY >= node.getY() && contextAnchorGraphY <= node.getY() + node.getHeight()) {
+                contextNode = node;
+                break;
+            }
+        }
+        contextKind = contextNode == null ? ContextKind.CANVAS : ContextKind.NODE;
+        if (contextNode != null && !contextNode.isSelected()) {
+            graph.getNodes().forEach(node -> node.setSelected(false));
+            contextNode.setSelected(true);
+            selectedNode = contextNode;
+        }
+    }
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (!exportDialogOpen && !importDialogOpen && !newFunctionNamingOpen && !itemPickerOpen) {
+            if (handleContextMenuClick(mouseX, mouseY, button)) return true;
+            if (tryHandleNodeDockClick(mouseX, mouseY, button)) return true;
+            if (button == 0 && categoryRailToggleContains(mouseX, mouseY)) {
+                categoryRailVisible = !categoryRailVisible;
+                if (!categoryRailVisible) {
+                    openPaletteCategory = null;
+                    paletteSearchFocused = false;
+                    pendingPaletteNode = null;
+                    paletteDragActivated = false;
+                }
+                playUiClick(categoryRailVisible ? 1.02f : 0.96f);
+                return true;
+            }
+            if (handleCategorySidebarClick(mouseX, mouseY, button)) return true;
+        }
         if (exportDialogOpen) {
             if (button != 0) {
                 return true;
@@ -4484,19 +4917,6 @@ public class WNodeScreen extends Screen {
         if (handleNestedDiskToolbarClick(mouseX, mouseY, button)) {
             return true;
         }
-        if (button == 0 && centerViewBtnContains(mouseX, mouseY)) {
-            requestCameraCenterOnNodes();
-            return true;
-        }
-        if (button == 0 && shareExportBtnContains(mouseX, mouseY)) {
-            openExportDialog();
-            return true;
-        }
-        if (button == 0 && shareImportBtnContains(mouseX, mouseY)) {
-            openImportFromStringDialog();
-            playUiClick(1.01f);
-            return true;
-        }
         if (functionStore != null && button == 0 && schematicBtnContains(mouseX, mouseY)) {
             if (functionPickerOpen) {
                 commitLibraryFunctionRename();
@@ -4557,11 +4977,19 @@ public class WNodeScreen extends Screen {
             onClose();
             return true;
         }
-        if (!isSearching && isInsideEditorPanel(mouseX, mouseY) && tryHandleNodeDockClick(mouseX, mouseY, button)) {
-            return true;
-        }
         if (sectionColorPickerSectionId != null) {
             return handleSectionColorPickerMouseClick(mouseX, mouseY, button);
+        }
+        if (!isSearching && isInsideEditorPanel(mouseX, mouseY) && !isCanvasPoint(mouseX, mouseY)) {
+            return true;
+        }
+        if (button == 1 && isCanvasPoint(mouseX, mouseY)) {
+            rightPressX = (int) mouseX;
+            rightPressY = (int) mouseY;
+            rightPressAtMs = net.minecraft.Util.getMillis();
+            rightDragPanning = false;
+            contextKind = ContextKind.NONE;
+            return true;
         }
         int nx = screenToGraphX(mouseX);
         int ny = screenToGraphY(mouseY);
@@ -4815,12 +5243,10 @@ public class WNodeScreen extends Screen {
             }
         }
         if (button == 0) {
-            if (Screen.hasShiftDown()) {
-                isSelecting = true; selStartX = nx; selStartY = ny; selEndX = nx; selEndY = ny;
-            } else {
-                isPanning = true;
+            if (!Screen.hasShiftDown()) {
                 graph.getNodes().forEach(n -> n.setSelected(false));
             }
+            isSelecting = true; selStartX = nx; selStartY = ny; selEndX = nx; selEndY = ny;
             return true;
         }
         selectedNode = null; if (!Screen.hasShiftDown()) graph.getNodes().forEach(n -> n.setSelected(false));
@@ -4829,6 +5255,47 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && pendingPaletteNode != null) {
+            BrowseNodeRow row = pendingPaletteNode;
+            pendingPaletteNode = null;
+            if (paletteDragActivated) {
+                if (isCanvasPoint(mouseX, mouseY)) {
+                    WNode placed = addNodeAtReturning(row.nodeType(), screenToGraphX(mouseX), screenToGraphY(mouseY));
+                    if (placed != null) {
+                        graph.getNodes().forEach(node -> node.setSelected(false));
+                        placed.setSelected(true);
+                        selectedNode = placed;
+                    }
+                }
+            } else {
+                int canvasLeft = viewInset() + paletteWidth();
+                int canvasRight = gridRight();
+                int canvasTop = viewInset() + TOP_BAR_H;
+                int canvasBottom = gridBottom();
+                WNode placed = addNodeAtReturning(
+                        row.nodeType(),
+                        screenToGraphX((canvasLeft + canvasRight) / 2.0),
+                        screenToGraphY((canvasTop + canvasBottom) / 2.0));
+                if (placed != null) {
+                    graph.getNodes().forEach(node -> node.setSelected(false));
+                    placed.setSelected(true);
+                    selectedNode = placed;
+                }
+            }
+            paletteDragActivated = false;
+            return true;
+        }
+        if (button == 1 && rightPressX >= 0) {
+            boolean click = !rightDragPanning && PointerGestureClassifier.isContextClick(
+                    rightPressX, rightPressY, rightPressAtMs,
+                    (int) mouseX, (int) mouseY, net.minecraft.Util.getMillis());
+            if (click && isCanvasPoint(rightPressX, rightPressY)) openContextMenuAt(rightPressX, rightPressY);
+            rightPressX = -1;
+            rightPressY = -1;
+            rightDragPanning = false;
+            isPanning = false;
+            return true;
+        }
         int nx = screenToGraphX(mouseX);
         int ny = screenToGraphY(mouseY);
         if (isCreatingSection && button == 0) {
@@ -4914,6 +5381,28 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 0 && pendingPaletteNode != null) {
+            paletteDragActivated |= PointerGestureClassifier.exceededDragThreshold(
+                    paletteDragStartX, paletteDragStartY, (int) mouseX, (int) mouseY);
+            return true;
+        }
+        if (button == 1 && rightPressX >= 0) {
+            boolean startedNow = false;
+            if (!rightDragPanning && PointerGestureClassifier.exceededDragThreshold(
+                    rightPressX, rightPressY, (int) mouseX, (int) mouseY)) {
+                rightDragPanning = true;
+                isPanning = true;
+                contextKind = ContextKind.NONE;
+                startedNow = true;
+            }
+            if (rightDragPanning) {
+                cameraFocusActive = false;
+                float scale = editorContentScale();
+                panX += (startedNow ? mouseX - rightPressX : dragX) / scale;
+                panY += (startedNow ? mouseY - rightPressY : dragY) / scale;
+            }
+            return true;
+        }
         if (sectionColorPickerSectionId != null && sectionPickDragChannel >= 0 && button == 0) {
             sectionPickerSetChannelFromMouseX(sectionPickDragChannel, mouseX);
             return true;
@@ -5067,6 +5556,28 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (categoryRailVisible
+                && mouseX >= viewInset() && mouseX < viewInset() + CATEGORY_RAIL_W
+                && mouseY >= palettePanelTop() && mouseY < palettePanelBottom()) {
+            List<NodeMenuRegistry.Category> categories = topPaletteCategories();
+            paletteCategoryScroll = Mth.clamp(
+                    paletteCategoryScroll - (int) Math.signum(scrollY),
+                    0,
+                    maxPaletteCategoryScroll(categories));
+            return true;
+        }
+        if (openPaletteCategory != null) {
+            int x = viewInset() + CATEGORY_RAIL_W;
+            if (mouseX >= x && mouseX < x + CATEGORY_PANEL_W
+                    && mouseY >= palettePanelTop() && mouseY < palettePanelBottom()) {
+                int visible = Math.max(1, (palettePanelBottom() - (palettePanelTop() + 24)) / CATEGORY_ROW_H);
+                paletteScroll = Mth.clamp(
+                        paletteScroll - (int) Math.signum(scrollY),
+                        0,
+                        Math.max(0, paletteRows().size() - visible));
+                return true;
+            }
+        }
         if (importDialogOpen) {
             return true;
         }
@@ -5117,6 +5628,26 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE && shareMenuOpen) {
+            shareMenuOpen = false;
+            return true;
+        }
+        if (contextKind != ContextKind.NONE) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) contextKind = ContextKind.NONE;
+            return true;
+        }
+        if (paletteSearchFocused) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) paletteSearchFocused = false;
+            else if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !paletteSearch.isEmpty()) {
+                paletteSearch = paletteSearch.substring(0, paletteSearch.length() - 1);
+                paletteScroll = 0;
+                paletteKeyboardIndex = 0;
+            } else if (keyCode == GLFW.GLFW_KEY_UP) movePaletteSelection(-1);
+            else if (keyCode == GLFW.GLFW_KEY_DOWN) movePaletteSelection(1);
+            else if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER)
+                placePaletteKeyboardSelection();
+            return true;
+        }
         if (exportDialogOpen) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
                 closeExportDialog();
@@ -5473,6 +6004,14 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
+        if (paletteSearchFocused) {
+            if (!Character.isISOControl(codePoint) && paletteSearch.length() < 64) {
+                paletteSearch += codePoint;
+                paletteScroll = 0;
+                paletteKeyboardIndex = 0;
+            }
+            return true;
+        }
         if (importDialogOpen) {
             if (!Character.isISOControl(codePoint)) {
                 importDialogText += codePoint;
@@ -5569,100 +6108,117 @@ public class WNodeScreen extends Screen {
         return mx >= bx && mx < bx + btn && my >= by && my < by + btn;
     }
 
+    private ActionDockLayout actionDockLayout() {
+        List<ActionButton> buttons = new ArrayList<>();
+        buttons.add(ActionButton.SHARE);
+        buttons.add(ActionButton.CENTER);
+        if (anyNodeSelectedForDock()) {
+            buttons.add(ActionButton.DUPLICATE);
+            buttons.add(ActionButton.DISCONNECT);
+        }
+        buttons.add(ActionButton.DELETE);
+        int width = buttons.size() * ACTION_BUTTON_SIZE + (buttons.size() - 1) * ACTION_BUTTON_GAP;
+        return new ActionDockLayout(
+                this.width / 2 - width / 2,
+                height - viewInset() - ACTION_BUTTON_SIZE - 6,
+                width,
+                List.copyOf(buttons));
+    }
+
+    private int actionButtonX(ActionDockLayout layout, int index) {
+        return layout.x() + index * (ACTION_BUTTON_SIZE + ACTION_BUTTON_GAP);
+    }
+
+    private ActionButton hoveredActionButton(ActionDockLayout layout, int mx, int my) {
+        for (int i = 0; i < layout.buttons().size(); i++) {
+            if (dockButtonHovered(mx, my, actionButtonX(layout, i), layout.y(), ACTION_BUTTON_SIZE)) {
+                return layout.buttons().get(i);
+            }
+        }
+        return null;
+    }
+
     private void renderNodeActionDock(GuiGraphics graphics, int mx, int my, float ease) {
-        if (!anyNodeSelectedForDock()) {
-            return;
+        ActionDockLayout layout = actionDockLayout();
+        boolean selected = anyNodeSelectedForDock();
+        ActionButton hovered = hoveredActionButton(layout, mx, my);
+        int iconOffset = (ACTION_BUTTON_SIZE - ICON_SIZE) / 2;
+        for (int i = 0; i < layout.buttons().size(); i++) {
+            ActionButton action = layout.buttons().get(i);
+            int x = actionButtonX(layout, i);
+            boolean enabled = action != ActionButton.DELETE || selected;
+            if (action == ActionButton.DELETE && enabled) {
+                ComputedEditorStyle.drawDangerButton(graphics, x, layout.y(), ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE,
+                        hovered == action);
+            } else {
+                ComputedEditorStyle.drawButton(graphics, x, layout.y(), ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE,
+                        enabled && hovered == action, action == ActionButton.SHARE && shareMenuOpen);
+            }
+            int color = enabled ? ComputedEditorTheme.TEXT_SECONDARY : ComputedEditorTheme.TEXT_DISABLED;
+            int ix = x + iconOffset;
+            int iy = layout.y() + iconOffset;
+            switch (action) {
+                case SHARE -> ComputedEditorIcons.drawImportExport(graphics, ix + 1, iy + 1, color);
+                case CENTER -> ComputedEditorIcons.drawCenterView(graphics, ix + 1, iy + 1, color);
+                case DELETE -> ComputedEditorIcons.drawTrash(
+                        graphics, ix + 1, iy + 1,
+                        enabled ? ComputedEditorTheme.STATUS_ERROR_TEXT : ComputedEditorTheme.TEXT_DISABLED);
+                case DUPLICATE, DISCONNECT -> {
+                    ComputedEditorStyle.beginTextureIcon(graphics);
+                    ResourceLocation icon = action == ActionButton.DUPLICATE ? ICON_DUPLICATE : ICON_DISCONNECT;
+                    graphics.blit(icon, ix, iy, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+                }
+            }
         }
-        NodeDockLayout L = computeNodeDockLayout();
-        int alphaBg = (int) (230 * ease);
-        int dockFill = (alphaBg << 24) | (ComputedEditorTheme.BACKGROUND_SECONDARY & 0x00FFFFFF);
-        ComputedEditorStyle.drawBeveledPanel(
-                graphics,
-                L.barX,
-                L.barY,
-                L.barW,
-                L.barH,
-                dockFill,
-                ComputedEditorTheme.BORDER_MENU,
-                ComputedEditorTheme.BORDER_INNER);
-
-        int iconOff = (L.btn - 16) / 2;
-        if (dockButtonHovered(mx, my, L.dupX, L.btnY, L.btn)) {
-            ComputedEditorStyle.drawMenuRow(graphics, L.dupX, L.btnY, L.btn, L.btn, true, false);
+        if (shareMenuOpen) {
+            int shareX = actionButtonX(layout, 0);
+            int menuY = layout.y() - 42;
+            ComputedEditorStyle.drawMenuPanel(graphics, shareX, menuY, 112, 40);
+            boolean exportHovered = mx >= shareX && mx < shareX + 112 && my >= menuY + 2 && my < menuY + 20;
+            boolean importHovered = mx >= shareX && mx < shareX + 112 && my >= menuY + 20 && my < menuY + 38;
+            ComputedEditorStyle.drawMenuRow(graphics, shareX + 1, menuY + 2, 110, 18, exportHovered, false);
+            ComputedEditorStyle.drawMenuRow(graphics, shareX + 1, menuY + 20, 110, 18, importHovered, false);
+            graphics.drawString(font, "Export program", shareX + 7, menuY + 7, ComputedEditorTheme.TEXT_PRIMARY, false);
+            graphics.drawString(font, "Import program", shareX + 7, menuY + 25, ComputedEditorTheme.TEXT_PRIMARY, false);
         }
-        graphics.blit(ICON_DUPLICATE, L.dupX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        graphics.drawString(
-                font,
-                "+",
-                L.dupX + 3,
-                L.btnY + L.btn - font.lineHeight - 1,
-                ComputedEditorTheme.ACCENT_MUTED,
-                false);
-
-        if (dockButtonHovered(mx, my, L.delX, L.btnY, L.btn)) {
-            graphics.fill(
-                    L.delX,
-                    L.btnY,
-                    L.delX + L.btn,
-                    L.btnY + L.btn,
-                    ComputedEditorTheme.DANGER_HOVER);
-        }
-        graphics.blit(ICON_DELETE, L.delX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        int dockKey = 11;
-        int dk = L.btn - dockKey - 3;
-        blitScaledHintTile(graphics, KEY_CAP_DEL, L.delX + dk, L.btnY + dk, dockKey);
-        blitScaledHintTile(graphics, KEY_CAP_X, L.delX + 3, L.btnY + dk, dockKey);
-
-        if (dockButtonHovered(mx, my, L.disX, L.btnY, L.btn)) {
-            ComputedEditorStyle.drawMenuRow(graphics, L.disX, L.btnY, L.btn, L.btn, true, false);
-        }
-        graphics.blit(ICON_DISCONNECT, L.disX + iconOff, L.btnY + iconOff, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-        graphics.drawString(font, "~", L.disX + 3, L.btnY + L.btn - font.lineHeight - 1, 0xFF997755, false);
-
-        if (dockButtonHovered(mx, my, L.dupX, L.btnY, L.btn)) {
-            graphics.renderTooltip(
-                    font,
-                    Component.literal(
-                            "Duplicate: copies with new IDs. Clipboard paste also fixed so IDs are not reused."),
-                    mx,
-                    my);
-        } else if (dockButtonHovered(mx, my, L.delX, L.btnY, L.btn)) {
-            graphics.renderTooltip(font, Component.literal("Delete selected (Del / X)"), mx, my);
-        } else if (dockButtonHovered(mx, my, L.disX, L.btnY, L.btn)) {
-            graphics.renderTooltip(
-                    font, Component.literal("Disconnect: remove all wires to/from selection"), mx, my);
+        if (hovered != null) {
+            String label = switch (hovered) {
+                case SHARE -> "Import / Export";
+                case CENTER -> "Center View";
+                case DUPLICATE -> "Duplicate Selected";
+                case DISCONNECT -> "Disconnect Selected";
+                case DELETE -> selected ? "Delete Selected" : "Delete Selected (nothing selected)";
+            };
+            queueEditorTooltip(Component.literal(label), mx, my);
         }
     }
 
     private boolean tryHandleNodeDockClick(double mouseX, double mouseY, int button) {
-        if (isSearching) {
-            return false;
-        }
-        if (button != 0 && button != 1) {
-            return false;
-        }
-        if (!anyNodeSelectedForDock()) {
-            return false;
-        }
-        NodeDockLayout L = computeNodeDockLayout();
+        if (isSearching || button != 0) return false;
+        ActionDockLayout layout = actionDockLayout();
         int mx = (int) mouseX;
         int my = (int) mouseY;
-        if (mx < L.barX || mx >= L.barX + L.barW || my < L.barY || my >= L.barY + L.barH) {
+        int shareX = actionButtonX(layout, 0);
+        int shareMenuY = layout.y() - 42;
+        if (shareMenuOpen && mx >= shareX && mx < shareX + 112
+                && my >= shareMenuY + 2 && my < shareMenuY + 38) {
+            if (my < shareMenuY + 20) openExportDialog(); else openImportFromStringDialog();
+            shareMenuOpen = false;
+            return true;
+        }
+        ActionButton action = hoveredActionButton(layout, mx, my);
+        if (action == null) {
+            if (shareMenuOpen) { shareMenuOpen = false; return true; }
             return false;
         }
-        if (dockButtonHovered(mx, my, L.dupX, L.btnY, L.btn)) {
-            duplicateSelectedNodes();
-            return true;
+        switch (action) {
+            case SHARE -> shareMenuOpen = !shareMenuOpen;
+            case CENTER -> requestCameraCenterOnNodes();
+            case DUPLICATE -> duplicateSelectedNodes();
+            case DISCONNECT -> disconnectSelectedNodes();
+            case DELETE -> { if (anyNodeSelectedForDock()) deleteSelectedNodes(); }
         }
-        if (dockButtonHovered(mx, my, L.delX, L.btnY, L.btn)) {
-            deleteSelectedNodes();
-            return true;
-        }
-        if (dockButtonHovered(mx, my, L.disX, L.btnY, L.btn)) {
-            disconnectSelectedNodes();
-            return true;
-        }
-        return false;
+        return true;
     }
 
     private void duplicateSelectedNodes() {
