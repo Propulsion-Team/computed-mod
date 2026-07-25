@@ -13,6 +13,7 @@ import dev.propulsionteam.computed.internal.node.api.WGraph;
 import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.lua.compiler.LuaSourceCompiler;
 import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
+import dev.propulsionteam.computed.lua.node.IntegrationLuaLibrary;
 import dev.propulsionteam.computed.lua.node.LuaDefinitionLoader;
 import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
 import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
@@ -30,6 +31,7 @@ public final class LuaEditorGraphAdapter {
 
     public static WGraph toEditorGraph(ComputedProgramV3 program) {
         Map<String, LuaDefinitionSource> definitions = new LinkedHashMap<>(BundledLuaLibrary.load());
+        definitions.putAll(IntegrationLuaLibrary.load());
         definitions.putAll(program.library());
         Map<UUID, LuaEditorNode> nodes = new LinkedHashMap<>();
         WGraph graph = new WGraph();
@@ -235,6 +237,7 @@ public final class LuaEditorGraphAdapter {
 
     public static Map<String, LuaDefinitionSource> definitions(ComputedProgramV3 program) {
         Map<String, LuaDefinitionSource> definitions = new LinkedHashMap<>(BundledLuaLibrary.load());
+        definitions.putAll(IntegrationLuaLibrary.load());
         definitions.putAll(program.library());
         return java.util.Collections.unmodifiableMap(definitions);
     }

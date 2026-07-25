@@ -58,6 +58,10 @@ public class ComputerEditorScreen extends WNodeScreen {
     private boolean contextOpen;
     private int contextX;
     private int contextY;
+    private ExplorerNode explorerPressNode;
+    private double explorerPressX;
+    private double explorerPressY;
+    private boolean explorerDragging;
 
     public ComputerEditorScreen(
             BlockPos computerPos,
@@ -159,6 +163,16 @@ public class ComputerEditorScreen extends WNodeScreen {
         if (contextOpen) {
             renderContext(graphics, mouseX, mouseY);
         }
+        if (explorerDragging && explorerPressNode != null) {
+            graphics.fill(mouseX + 5, mouseY + 5, mouseX + 17, mouseY + 17, ComputedEditorTheme.ACCENT);
+            graphics.drawString(
+                    font,
+                    explorerPressNode.title(),
+                    mouseX + 21,
+                    mouseY + 7,
+                    ComputedEditorTheme.TEXT_HEADER,
+                    true);
+        }
         graphics.pose().popPose();
     }
 
@@ -174,6 +188,43 @@ public class ComputerEditorScreen extends WNodeScreen {
             return handleExplorerClick(mouseX, mouseY, button);
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(
+            double mouseX,
+            double mouseY,
+            int button,
+            double dragX,
+            double dragY) {
+        if (button == 0 && explorerPressNode != null) {
+            if (Math.hypot(mouseX - explorerPressX, mouseY - explorerPressY) >= 4) {
+                explorerDragging = true;
+            }
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && explorerPressNode != null) {
+            ExplorerNode released = explorerPressNode;
+            boolean dragged = explorerDragging;
+            explorerPressNode = null;
+            explorerDragging = false;
+            if (dragged && mouseX >= EXPLORER_WIDTH) {
+                explorerAnchorX = editorGraphX(mouseX);
+                explorerAnchorY = editorGraphY(mouseY);
+                place(released);
+            } else if (!dragged) {
+                explorerAnchorX = editorGraphX(width / 2.0);
+                explorerAnchorY = editorGraphY(height / 2.0);
+                place(released);
+            }
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override
@@ -399,6 +450,7 @@ public class ComputerEditorScreen extends WNodeScreen {
                 explorerScroll,
                 0,
                 Math.max(0, rows.size() - visible));
+        String unavailableTooltip = "";
         for (int index = explorerScroll; index < Math.min(rows.size(), explorerScroll + visible); index++) {
             ExplorerRow row = rows.get(index);
             int y = 46 + (index - explorerScroll) * EXPLORER_ROW_HEIGHT;
@@ -442,7 +494,13 @@ public class ComputerEditorScreen extends WNodeScreen {
                                 ? ComputedEditorTheme.TEXT_PRIMARY
                                 : ComputedEditorTheme.TEXT_DISABLED,
                         false);
+                if (hovered && !row.node().available()) {
+                    unavailableTooltip = row.node().unavailableReason();
+                }
             }
+        }
+        if (!unavailableTooltip.isEmpty()) {
+            graphics.renderTooltip(font, Component.literal(unavailableTooltip), mouseX, mouseY);
         }
     }
 
@@ -515,9 +573,10 @@ public class ComputerEditorScreen extends WNodeScreen {
                 minecraft.setScreen(new LuaNodeEditorScreen(this, baseProgram, source.source()));
             }
         } else if (!row.folder() && row.node().available() && button == 0) {
-            explorerAnchorX = editorGraphX(width / 2.0);
-            explorerAnchorY = editorGraphY(height / 2.0);
-            place(row.node());
+            explorerPressNode = row.node();
+            explorerPressX = mouseX;
+            explorerPressY = mouseY;
+            explorerDragging = false;
         }
         return true;
     }
@@ -569,8 +628,11 @@ public class ComputerEditorScreen extends WNodeScreen {
     }
 
     private void openLuaFromClipboard() {
-        String source = minecraft.keyboardHandler.getClipboard();
-        if (source == null || source.isBlank()) {
+        String source;
+        try {
+            source = dev.propulsionteam.computed.persistence.LuaDefinitionClipboard.importSource(
+                    minecraft.keyboardHandler.getClipboard());
+        } catch (IllegalArgumentException exception) {
             source = """
                     local node = computed.node(1, "example:new_node", "New Node")
 
@@ -638,13 +700,16 @@ public class ComputerEditorScreen extends WNodeScreen {
                 List<String> path = java.util.Arrays.stream(definition.category().split("/"))
                         .filter(segment -> !segment.isBlank())
                         .toList();
+                String unavailableReason = source.origin() == LuaDefinitionSource.Origin.INTEGRATION
+                        ? dev.propulsionteam.computed.lua.node.IntegrationLuaLibrary.unavailableReason(id)
+                        : "";
                 nodes.add(new ExplorerNode(
                         id,
                         definition.title(),
                         ownership,
                         path,
-                        true,
-                        ""));
+                        unavailableReason.isEmpty(),
+                        unavailableReason));
             } catch (RuntimeException ignored) {
                 nodes.add(new ExplorerNode(
                         id,

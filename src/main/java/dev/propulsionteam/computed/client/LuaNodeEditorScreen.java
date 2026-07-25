@@ -10,6 +10,8 @@ import dev.propulsionteam.computed.graph.LuaDefinitionSource;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpoints;
 import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
+import dev.propulsionteam.computed.lua.node.LuaDefinitionFiles;
+import dev.propulsionteam.computed.persistence.LuaDefinitionClipboard;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +62,7 @@ public final class LuaNodeEditorScreen extends Screen {
     private LuaLivePreview preview;
     private LuaEditorNode previewNode;
     private LuaNodeDefinition previewDefinition;
+    private String fileDefinitionId = "";
 
     public LuaNodeEditorScreen(
             ComputerEditorScreen parent,
@@ -101,21 +104,28 @@ public final class LuaNodeEditorScreen extends Screen {
             return true;
         }
         int divider = Math.max(300, width * 3 / 5);
-        if (contains(mouseX, mouseY, divider - 198, 5, 46, 18)) {
+        if (contains(mouseX, mouseY, divider - 292, 5, 42, 18)) {
             minecraft.keyboardHandler.setClipboard(source);
             status = "Lua source copied";
             return true;
         }
-        if (contains(mouseX, mouseY, divider - 148, 5, 46, 18)) {
-            replaceSource(minecraft.keyboardHandler.getClipboard());
-            status = "Lua source loaded";
+        if (contains(mouseX, mouseY, divider - 247, 5, 42, 18)) {
+            loadClipboard();
             return true;
         }
-        if (contains(mouseX, mouseY, divider - 98, 5, 42, 18)) {
+        if (contains(mouseX, mouseY, divider - 202, 5, 42, 18)) {
+            exportFile();
+            return true;
+        }
+        if (contains(mouseX, mouseY, divider - 157, 5, 42, 18)) {
+            importFile();
+            return true;
+        }
+        if (contains(mouseX, mouseY, divider - 112, 5, 50, 18)) {
             resetPreview();
             return true;
         }
-        if (contains(mouseX, mouseY, divider - 52, 5, 46, 18)) {
+        if (contains(mouseX, mouseY, divider - 59, 5, 53, 18)) {
             apply();
             return true;
         }
@@ -256,14 +266,16 @@ public final class LuaNodeEditorScreen extends Screen {
         graphics.fill(0, 0, width, 26, ComputedEditorTheme.BACKGROUND_SECONDARY);
         graphics.hLine(0, width, 25, ComputedEditorTheme.BORDER_MENU);
         graphics.drawString(font, "Lua Source", 8, 9, ComputedEditorTheme.TEXT_HEADER, false);
-        button(graphics, divider - 198, 5, 46, "Copy", mouseX, mouseY, false);
-        button(graphics, divider - 148, 5, 46, "Load", mouseX, mouseY, false);
-        button(graphics, divider - 98, 5, 42, "Reset", mouseX, mouseY, false);
+        button(graphics, divider - 292, 5, 42, "Copy", mouseX, mouseY, false);
+        button(graphics, divider - 247, 5, 42, "Paste", mouseX, mouseY, false);
+        button(graphics, divider - 202, 5, 42, "Save", mouseX, mouseY, false);
+        button(graphics, divider - 157, 5, 42, "File", mouseX, mouseY, false);
+        button(graphics, divider - 112, 5, 50, "Reset", mouseX, mouseY, false);
         button(
                 graphics,
-                divider - 52,
+                divider - 59,
                 5,
-                46,
+                53,
                 replacementConfirmation ? "Replace" : "Apply",
                 mouseX,
                 mouseY,
@@ -436,6 +448,7 @@ public final class LuaNodeEditorScreen extends Screen {
             return;
         }
         previewDefinition = snapshot.currentDefinition();
+        fileDefinitionId = previewDefinition.id();
         sampleInputs.clear();
         previewDefinition.inputs().forEach(input -> sampleInputs.put(input.id(), input.defaultValue()));
         sampleFields.clear();
@@ -543,6 +556,50 @@ public final class LuaNodeEditorScreen extends Screen {
         source = replacement == null ? "" : replacement;
         cursor = source.length();
         changed();
+    }
+
+    private void loadClipboard() {
+        try {
+            replaceSource(LuaDefinitionClipboard.importSource(minecraft.keyboardHandler.getClipboard()));
+            status = "Lua source loaded from clipboard";
+        } catch (IllegalArgumentException exception) {
+            status = exception.getMessage();
+        }
+    }
+
+    private void exportFile() {
+        var snapshot = session.snapshot();
+        LuaNodeDefinition definition = snapshot.currentDefinition();
+        if (definition == null) {
+            status = "Fix diagnostics before exporting";
+            return;
+        }
+        try {
+            var sourceDefinition = LuaDefinitionSource.embedded(1, definition.id(), source);
+            var path = LuaDefinitionFiles.export(
+                    net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get(),
+                    sourceDefinition);
+            fileDefinitionId = definition.id();
+            status = "Saved " + path.getFileName();
+        } catch (java.io.IOException | RuntimeException exception) {
+            status = "File export failed: " + exception.getMessage();
+        }
+    }
+
+    private void importFile() {
+        if (fileDefinitionId.isBlank()) {
+            status = "Compile a definition before loading its file";
+            return;
+        }
+        String fileName = fileDefinitionId.replace(':', '_').replace('/', '_') + ".lua";
+        try {
+            replaceSource(LuaDefinitionFiles.importSource(
+                    net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get(),
+                    fileName));
+            status = "Loaded " + fileName;
+        } catch (java.io.IOException | RuntimeException exception) {
+            status = "File import failed: " + exception.getMessage();
+        }
     }
 
     private void insert(String text) {

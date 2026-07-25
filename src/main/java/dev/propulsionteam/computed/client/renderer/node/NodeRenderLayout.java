@@ -19,6 +19,7 @@ public record NodeRenderLayout(
                 Math.max(definition.inputs().size(), definition.outputs().size()),
                 definition.fields().size());
         boolean compact = definition.style() == NodeStyle.COMPACT;
+        boolean sideRail = compact || definition.style() == NodeStyle.SINK;
         int width = compact ? 96 : 144;
         int titleHeight = 18;
         int panelHeight = Math.max(18, rows * 18 + 8);
@@ -31,6 +32,6 @@ public record NodeRenderLayout(
                 width - 10,
                 panelHeight,
                 18,
-                compact);
+                sideRail);
     }
 }

@@ -86,7 +86,7 @@ Returns `true` only in the isolated live preview. It has no side effects. Produc
 
 ## endpoint:methods()
 
-Returns an alphabetically stable array of method IDs. It has no side effects and is available in preview. Example: `for _, name in ipairs(endpoint:methods()) do ... end`.
+Returns an alphabetically stable array of method IDs. Bound dynamic endpoints such as `computercraft:peripheral` instead return methods exposed by the selected target. It has no side effects. Static endpoint metadata is available in preview; dynamic target discovery may be unavailable. Example: `for _, name in ipairs(endpoint:methods()) do ... end`.
 
 ## endpoint:call(methodName, ...)
 
