@@ -42,6 +42,8 @@ public final class LuaDefinitionLoader {
             returned = new LuaClosure(source.prototype(), environment).call();
         } catch (LuaDefinitionException exception) {
             throw exception;
+        } catch (StackOverflowError error) {
+            throw new LuaDefinitionException("Lua definition exceeded the recursion limit", error);
         } catch (RuntimeException exception) {
             throw new LuaDefinitionException("Lua definition evaluation failed: " + exception.getMessage(), exception);
         }

@@ -96,6 +96,13 @@ Example mod description.
     side="BOTH"
 
 [[dependencies.${mod_id}]]
+    modId="computercraft"
+    type="optional"
+    versionRange="[1.120.0,)"
+    ordering="AFTER"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
     modId="sablecompanion"
     type="optional"
     versionRange="[1.5.0,)"

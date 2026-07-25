@@ -18,6 +18,7 @@ import dev.propulsionteam.computed.graph.LuaGraphScheduler;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
+import dev.propulsionteam.computed.network.ComputerEditPolicy;
 import dev.propulsionteam.computed.persistence.ProgramV3Codec;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -52,9 +53,6 @@ import org.jetbrains.annotations.Nullable;
 public class ComputerBlockEntity extends BaseContainerBlockEntity implements BuiltinEndpointHost {
     public static final int CONTAINER_SIZE = 9;
     public static final String PROGRAM_TAG = "ComputedProgram";
-    private static final int MAX_PROGRAM_NODES = 4096;
-    private static final int MAX_PROGRAM_CONNECTIONS = 20_000;
-    private static final int MAX_PROGRAM_BYTES = 4 * 1024 * 1024;
 
     private final NonNullList<ItemStack> items = NonNullList.withSize(CONTAINER_SIZE, ItemStack.EMPTY);
     private ComputedProgramV3 program;
@@ -153,10 +151,9 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     }
 
     public ApplyGraphResult applyGraphFromNetwork(CompoundTag tag, long expectedRevision) {
-        if (expectedRevision != programRevision) {
-            return ApplyGraphResult.rejected(
-                    programRevision,
-                    "stale editor revision (expected " + programRevision + ", received " + expectedRevision + ")");
+        String revisionError = ComputerEditPolicy.revision(programRevision, expectedRevision);
+        if (revisionError != null) {
+            return ApplyGraphResult.rejected(programRevision, revisionError);
         }
         String sizeError = validateEncodedSize(tag);
         if (sizeError != null) {
@@ -210,17 +207,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     }
 
     private String validateProgram(ComputedProgramV3 candidate) {
-        if (candidate.rootGraph().nodes().size() > MAX_PROGRAM_NODES) {
-            return "program exceeds the node limit of " + MAX_PROGRAM_NODES;
-        }
-        if (candidate.rootGraph().connections().size() > MAX_PROGRAM_CONNECTIONS) {
-            return "program exceeds the connection limit of " + MAX_PROGRAM_CONNECTIONS;
-        }
-        if (candidate.library().size() > ComputedProgramV3.MAX_EMBEDDED_DEFINITIONS) {
-            return "program exceeds the embedded definition limit of "
-                    + ComputedProgramV3.MAX_EMBEDDED_DEFINITIONS;
-        }
-        return null;
+        return ComputerEditPolicy.programShape(candidate);
     }
 
     private static ComputedProgramV3 preserveRuntimeState(
@@ -253,11 +240,9 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
             try (DataOutputStream output = new DataOutputStream(bytes)) {
                 NbtIo.write(tag, output);
             }
-            return bytes.size() > MAX_PROGRAM_BYTES
-                    ? "program exceeds the encoded size limit of " + MAX_PROGRAM_BYTES + " bytes"
-                    : null;
+            return ComputerEditPolicy.encodedSize(bytes.size());
         } catch (IOException | RuntimeException exception) {
-            return "program NBT could not be measured safely";
+            return ComputerEditPolicy.encodedSize(-1);
         }
     }
 
@@ -542,6 +527,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     private static UUID stableGraphId(BlockPos pos) {
         return UUID.nameUUIDFromBytes(
                 ("computed:graph:" + pos.toShortString()).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public Direction worldFaceForEndpoint(String name) {
+        return worldFace(name);
     }
 
     private Direction worldFace(String name) {

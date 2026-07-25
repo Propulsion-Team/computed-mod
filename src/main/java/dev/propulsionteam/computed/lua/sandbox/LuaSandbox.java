@@ -6,7 +6,6 @@ import org.luaj.vm2.Globals;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.LuaThread;
 import org.luaj.vm2.LuaValue;
-import org.luaj.vm2.lib.DebugLib;
 import org.luaj.vm2.compiler.LuaC;
 import org.luaj.vm2.lib.BaseLib;
 import org.luaj.vm2.lib.Bit32Lib;
@@ -15,7 +14,6 @@ import org.luaj.vm2.lib.MathLib;
 import org.luaj.vm2.lib.PackageLib;
 import org.luaj.vm2.lib.StringLib;
 import org.luaj.vm2.lib.TableLib;
-import org.luaj.vm2.lib.ZeroArgFunction;
 
 public final class LuaSandbox {
     private static final List<String> BLOCKED_GLOBALS = List.of(
@@ -31,7 +29,7 @@ public final class LuaSandbox {
 
     private final Globals globals;
     private final LuaInstructionBudget budget;
-    private final LuaValue instructionHook;
+    private final LuaValue invocationWorker;
 
     public LuaSandbox() {
         this(new LuaInstructionBudget());
@@ -48,15 +46,21 @@ public final class LuaSandbox {
         globals.load(new Bit32Lib());
         globals.load(new CoroutineLib());
         LuaC.install(globals);
-        globals.load(new DebugLib());
-        instructionHook = new ZeroArgFunction() {
-            @Override
-            public LuaValue call() {
-                budget.consume(1);
-                return LuaValue.NIL;
-            }
-        };
-        installHook(globals.running);
+        globals.load(new LuaBudgetDebugLib(budget));
+        invocationWorker = globals.load("""
+                local unpack_values = table.unpack or unpack
+                return function(completion_marker)
+                    local callback, context, arguments = coroutine.yield()
+                    while true do
+                        if arguments then
+                            callback(context, unpack_values(arguments, 1, arguments.n))
+                        else
+                            callback(context)
+                        end
+                        callback, context, arguments = coroutine.yield(completion_marker)
+                    end
+                end
+                """, "@computed-invocation-worker").call();
         BLOCKED_GLOBALS.forEach(name -> globals.set(name, LuaValue.NIL));
     }
 
@@ -78,12 +82,15 @@ public final class LuaSandbox {
         return budget;
     }
 
+    public LuaValue invocationWorker() {
+        return invocationWorker;
+    }
+
     public boolean isBlocked(String name) {
         return globals.get(name).isnil();
     }
 
     public void installHook(LuaThread thread) {
-        thread.state.hookfunc = instructionHook;
-        thread.state.hookcount = 1;
+        Objects.requireNonNull(thread, "thread");
     }
 }

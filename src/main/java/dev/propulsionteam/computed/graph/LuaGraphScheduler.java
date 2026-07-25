@@ -4,6 +4,7 @@ import dev.propulsionteam.computed.diagnostics.ComputedDiagnostic;
 import dev.propulsionteam.computed.diagnostics.ComputedDiagnostic.Phase;
 import dev.propulsionteam.computed.diagnostics.ComputedDiagnostic.Severity;
 import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
+import dev.propulsionteam.computed.lua.node.IntegrationLuaLibrary;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpoints;
 import dev.propulsionteam.computed.lua.node.LuaExecutionPolicy;
 import dev.propulsionteam.computed.lua.node.LuaFieldSchema;
@@ -14,6 +15,7 @@ import dev.propulsionteam.computed.lua.runtime.LuaInvocationResult;
 import dev.propulsionteam.computed.lua.runtime.LuaNodeInstance;
 import dev.propulsionteam.computed.lua.runtime.LuaNodeStatus;
 import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
+import dev.propulsionteam.computed.lua.runtime.LuaValueCopies;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,6 +39,7 @@ public final class LuaGraphScheduler {
     private final Map<UUID, GraphNode> nodes = new LinkedHashMap<>();
     private final Map<UUID, List<GraphConnection>> incoming = new HashMap<>();
     private final Map<UUID, Map<String, LuaValue>> lastInputs = new HashMap<>();
+    private final Map<UUID, Map<String, LuaValue>> resolvedFields = new HashMap<>();
     private final Map<UUID, Map<String, LuaValue>> outputs = new LinkedHashMap<>();
     private final List<ComputedDiagnostic> definitionDiagnostics = new ArrayList<>();
     private final ArrayDeque<GraphEvent> events = new ArrayDeque<>();
@@ -103,7 +106,9 @@ public final class LuaGraphScheduler {
                     (name, values) -> events.addLast(new GraphEvent(null, name, values)));
             outputs.put(nodeId, result.outputs());
             diagnostics.addAll(result.diagnostics());
-            lastInputs.put(nodeId, copy(inputs));
+            if (instance.definition().executionPolicy() == LuaExecutionPolicy.INPUT) {
+                lastInputs.put(nodeId, LuaValueCopies.copyMap(inputs));
+            }
         }
         dispatchEvents(preview, diagnostics);
         stepRequested = false;
@@ -156,6 +161,7 @@ public final class LuaGraphScheduler {
 
     private void instantiateNodes() {
         Map<String, LuaDefinitionSource> definitions = new LinkedHashMap<>(BundledLuaLibrary.load());
+        definitions.putAll(IntegrationLuaLibrary.load());
         definitions.putAll(program.library());
         for (GraphNode node : program.rootGraph().nodes()) {
             LuaDefinitionSource source = definitions.get(node.definitionId());
@@ -182,6 +188,7 @@ public final class LuaGraphScheduler {
                 validatePortSnapshot(node, instance.definition());
                 restoreState(node, instance);
                 instances.put(node.id(), instance);
+                resolvedFields.put(node.id(), resolveFields(instance.definition(), node));
                 outputs.put(node.id(), instance.outputs());
             } catch (RuntimeException exception) {
                 definitionDiagnostics.add(error(
@@ -223,6 +230,9 @@ public final class LuaGraphScheduler {
 
     private void resumeYielded(List<ComputedDiagnostic> diagnostics) {
         instances.forEach((nodeId, instance) -> {
+            if (instance.status() != LuaNodeStatus.YIELDED) {
+                return;
+            }
             LuaInvocationResult result = instance.resumeIfReady();
             outputs.put(nodeId, result.outputs());
             diagnostics.addAll(result.diagnostics());
@@ -231,7 +241,7 @@ public final class LuaGraphScheduler {
 
     private Map<String, LuaValue> inputs(LuaNodeDefinition definition, GraphNode node) {
         Map<String, LuaValue> values = new LinkedHashMap<>();
-        definition.inputs().forEach(input -> values.put(input.id(), copy(input.defaultValue())));
+        definition.inputs().forEach(input -> values.put(input.id(), LuaValueCopies.copy(input.defaultValue())));
         for (GraphConnection connection : incoming.getOrDefault(node.id(), List.of())) {
             Map<String, LuaValue> sourceOutputs = outputs.get(connection.sourceNode());
             if (sourceOutputs == null) {
@@ -239,19 +249,23 @@ public final class LuaGraphScheduler {
             }
             LuaValue value = sourceOutputs.get(connection.sourcePort());
             if (value != null) {
-                values.put(connection.targetPort(), copy(value));
+                values.put(connection.targetPort(), LuaValueCopies.copy(value));
             }
         }
         return values;
     }
 
     private Map<String, LuaValue> fields(LuaNodeDefinition definition, GraphNode node) {
+        return resolvedFields.getOrDefault(node.id(), Map.of());
+    }
+
+    private Map<String, LuaValue> resolveFields(LuaNodeDefinition definition, GraphNode node) {
         Map<String, LuaValue> values = new LinkedHashMap<>();
         for (LuaFieldSchema field : definition.fields()) {
             CompoundTag encoded = node.fields().get(field.id());
             values.put(
                     field.id(),
-                    encoded == null ? copy(field.defaultValue()) : stateCodec.decode(encoded));
+                    encoded == null ? LuaValueCopies.copy(field.defaultValue()) : stateCodec.decode(encoded));
         }
         return values;
     }
@@ -298,27 +312,7 @@ public final class LuaGraphScheduler {
     }
 
     private boolean same(Map<String, LuaValue> left, Map<String, LuaValue> right) {
-        if (left == null || left.size() != right.size()) {
-            return false;
-        }
-        for (Map.Entry<String, LuaValue> entry : right.entrySet()) {
-            LuaValue previous = left.get(entry.getKey());
-            if (previous == null
-                    || !stateCodec.encode(previous).equals(stateCodec.encode(entry.getValue()))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private Map<String, LuaValue> copy(Map<String, LuaValue> source) {
-        Map<String, LuaValue> copied = new LinkedHashMap<>();
-        source.forEach((id, value) -> copied.put(id, copy(value)));
-        return copied;
-    }
-
-    private LuaValue copy(LuaValue value) {
-        return stateCodec.decode(stateCodec.encode(value));
+        return LuaValueCopies.equivalent(left, right);
     }
 
     private LuaTable toTable(Map<String, LuaValue> values) {

@@ -3,6 +3,7 @@ package dev.propulsionteam.computed.lua.sandbox;
 public final class LuaInstructionBudget {
     public static final int DEFAULT_INVOCATION_LIMIT = 50_000;
     public static final int DEFAULT_TICK_LIMIT = 500_000;
+    public static final int METERING_QUANTUM = 64;
 
     private final int invocationLimit;
     private final int tickLimit;
@@ -35,6 +36,13 @@ public final class LuaInstructionBudget {
         }
         active = true;
         invocationRemaining = invocationLimit;
+        try {
+            consume(METERING_QUANTUM);
+        } catch (RuntimeException exception) {
+            active = false;
+            invocationRemaining = 0;
+            throw exception;
+        }
         return new Scope(this);
     }
 

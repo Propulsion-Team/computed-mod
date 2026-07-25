@@ -24,15 +24,15 @@ public sealed interface EndpointResult permits EndpointResult.Immediate, Endpoin
         }
     }
 
-    static Immediate immediate(LuaValue... values) {
+    public static Immediate immediate(LuaValue... values) {
         return new Immediate(List.of(values));
     }
 
-    static Yielded yielded(CompletionStage<Immediate> continuation) {
+    public static Yielded yielded(CompletionStage<Immediate> continuation) {
         return new Yielded(continuation);
     }
 
-    static Unavailable unavailable(String reason) {
+    public static Unavailable unavailable(String reason) {
         return new Unavailable(reason);
     }
 }

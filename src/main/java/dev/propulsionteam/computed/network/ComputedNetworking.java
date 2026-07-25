@@ -21,7 +21,6 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import java.util.UUID;
 
 public final class ComputedNetworking {
-    private static final double MAX_EDIT_DISTANCE_SQ = 16.0 * 16.0;
     /** Pixels per monitor block; widget x/y/w/h are in this coordinate system. */
     public static final int SCREEN_PX_PER_BLOCK = 64;
     /** Monitor model/texture pixels reserved by the bezel on each outer screen edge. */
@@ -81,18 +80,18 @@ public final class ComputedNetworking {
                 return;
             }
             BlockPos pos = payload.pos();
-            if (player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_EDIT_DISTANCE_SQ) {
+            double distanceSquared = player.distanceToSqr(Vec3.atCenterOf(pos));
+            String accessError = ComputerEditPolicy.access(
+                    distanceSquared,
+                    player.mayBuild(),
+                    player.level().mayInteract(player, pos));
+            if (accessError != null) {
                 Computed.LOGGER.debug(
-                        "Rejected graph save from {} at {} (distance {:.2f} > {:.2f})",
+                        "Rejected graph save from {} at {} ({})",
                         player.getGameProfile().getName(),
                         pos,
-                        Math.sqrt(player.distanceToSqr(Vec3.atCenterOf(pos))),
-                        Math.sqrt(MAX_EDIT_DISTANCE_SQ));
-                rejectGraphSave(player, payload, -1L, "computer is too far away");
-                return;
-            }
-            if (!player.mayBuild() || !player.level().mayInteract(player, pos)) {
-                rejectGraphSave(player, payload, -1L, "you do not have permission to edit this computer");
+                        accessError);
+                rejectGraphSave(player, payload, -1L, accessError);
                 return;
             }
             BlockEntity be = player.level().getBlockEntity(pos);
@@ -139,7 +138,7 @@ public final class ComputedNetworking {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
             BlockPos originPos = payload.originPos();
-            if (player.distanceToSqr(Vec3.atCenterOf(originPos)) > MAX_EDIT_DISTANCE_SQ) return;
+            if (player.distanceToSqr(Vec3.atCenterOf(originPos)) > ComputerEditPolicy.MAX_DISTANCE_SQ) return;
             BlockEntity be = player.level().getBlockEntity(originPos);
             if (!(be instanceof MonitorBlockEntity origin)) return;
             BlockPos ownerPos = origin.getOwnerComputerPos();

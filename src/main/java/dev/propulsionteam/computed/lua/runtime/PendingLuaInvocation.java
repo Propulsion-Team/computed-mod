@@ -2,18 +2,14 @@ package dev.propulsionteam.computed.lua.runtime;
 
 import dev.propulsionteam.computed.lua.endpoint.EndpointResult;
 import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
-import org.luaj.vm2.LuaTable;
-import org.luaj.vm2.LuaThread;
 import org.luaj.vm2.LuaValue;
 import org.luaj.vm2.Varargs;
-import org.luaj.vm2.lib.VarArgFunction;
 
 final class PendingLuaInvocation {
     private final UUID computerId;
@@ -28,7 +24,9 @@ final class PendingLuaInvocation {
     private final Map<String, LuaValue> state;
     private final Map<String, LuaValue> outputs;
     private final BiConsumer<String, List<LuaValue>> eventSink;
-    private final LuaThread thread;
+    private final LuaValue callback;
+    private final LuaInvocationWorker worker;
+    private final LuaInvocationContext context;
     private CompletionStage<EndpointResult.Immediate> continuation;
 
     PendingLuaInvocation(
@@ -44,7 +42,9 @@ final class PendingLuaInvocation {
             Map<String, LuaValue> state,
             Map<String, LuaValue> outputs,
             BiConsumer<String, List<LuaValue>> eventSink,
-            LuaValue callback) {
+            LuaValue callback,
+            LuaInvocationWorker worker,
+            LuaInvocationContext context) {
         this.computerId = computerId;
         this.nodeId = nodeId;
         this.sandbox = sandbox;
@@ -52,61 +52,34 @@ final class PendingLuaInvocation {
         this.endpointHost = endpointHost;
         this.tick = tick;
         this.graphStep = graphStep;
-        this.inputs = new LinkedHashMap<>(inputs);
-        this.fields = new LinkedHashMap<>(fields);
-        this.state = new LinkedHashMap<>(state);
-        this.outputs = new LinkedHashMap<>(outputs);
+        this.inputs = inputs;
+        this.fields = fields;
+        this.state = state;
+        this.outputs = outputs;
         this.eventSink = eventSink;
-        this.thread = new LuaThread(sandbox.globals(), callback);
-        sandbox.installHook(thread);
-    }
-
-    LuaTable context() {
-        LuaTable context = new LuaTable();
-        context.set("input", method(context, args -> value(inputs, args.arg(2))));
-        context.set("output", method(context, args -> {
-            outputs.put(args.arg(2).checkjstring(), args.arg(3));
-            return LuaValue.NIL;
-        }));
-        context.set("field", method(context, args -> value(fields, args.arg(2))));
-        context.set("state", method(context, args -> value(state, args.arg(2))));
-        context.set("set_state", method(context, args -> {
-            state.put(args.arg(2).checkjstring(), args.arg(3));
-            return LuaValue.NIL;
-        }));
-        context.set("endpoint", method(context, args -> LuaEndpointProxy.create(
-                this,
-                args.arg(2).checkjstring(),
-                args.arg(3).optjstring(""))));
-        context.set("emit", method(context, args -> {
-            String eventName = args.arg(2).checkjstring();
-            List<LuaValue> values = new java.util.ArrayList<>();
-            for (int index = 3; index <= args.narg(); index++) {
-                values.add(args.arg(index));
-            }
-            eventSink.accept(eventName, values);
-            return LuaValue.NIL;
-        }));
-        context.set("tick", method(context, args -> LuaValue.valueOf(tick)));
-        context.set("graph_step", method(context, args -> LuaValue.valueOf(graphStep)));
-        context.set("is_preview", method(context, args -> LuaValue.valueOf(preview)));
-        return context;
+        this.callback = callback;
+        this.worker = worker;
+        this.context = context;
     }
 
     Varargs start(List<LuaValue> eventArguments) {
-        LuaValue[] arguments = new LuaValue[eventArguments.size() + 1];
-        arguments[0] = context();
-        for (int index = 0; index < eventArguments.size(); index++) {
-            arguments[index + 1] = eventArguments.get(index);
+        if (worker == null) {
+            LuaValue[] arguments = new LuaValue[eventArguments.size() + 1];
+            arguments[0] = context.table();
+            for (int index = 0; index < eventArguments.size(); index++) {
+                arguments[index + 1] = eventArguments.get(index);
+            }
+            callback.invoke(LuaValue.varargsOf(arguments));
+            return LuaValue.TRUE;
         }
-        return thread.resume(LuaValue.varargsOf(arguments));
+        return worker.invoke(callback, context.table(), eventArguments);
     }
 
     Varargs resume() {
         CompletableFuture<EndpointResult.Immediate> future = continuation.toCompletableFuture();
         EndpointResult.Immediate result = future.join();
         continuation = null;
-        return thread.resume(LuaValue.varargsOf(result.values().toArray(LuaValue[]::new)));
+        return worker.resume(result.values());
     }
 
     void yieldFor(CompletionStage<EndpointResult.Immediate> continuation) {
@@ -125,7 +98,11 @@ final class PendingLuaInvocation {
     }
 
     boolean suspended() {
-        return LuaThread.STATUS_NAMES[LuaThread.STATUS_SUSPENDED].equals(thread.getStatus());
+        return worker != null && worker.suspended();
+    }
+
+    boolean completed(Varargs result) {
+        return worker == null || worker.completed(result);
     }
 
     Map<String, LuaValue> state() {
@@ -156,21 +133,35 @@ final class PendingLuaInvocation {
         return endpointHost;
     }
 
-    private static LuaValue value(Map<String, LuaValue> values, LuaValue key) {
-        return values.getOrDefault(key.checkjstring(), LuaValue.NIL);
+    LuaValue input(String id) {
+        return inputs.getOrDefault(id, LuaValue.NIL);
     }
 
-    private static VarArgFunction method(
-            LuaTable context,
-            java.util.function.Function<Varargs, LuaValue> action) {
-        return new VarArgFunction() {
-            @Override
-            public Varargs invoke(Varargs args) {
-                if (args.arg1() != context) {
-                    throw new org.luaj.vm2.LuaError("Context methods must be called with ':'");
-                }
-                return action.apply(args);
-            }
-        };
+    void output(String id, LuaValue value) {
+        outputs.put(id, value);
+    }
+
+    LuaValue field(String id) {
+        return fields.getOrDefault(id, LuaValue.NIL);
+    }
+
+    LuaValue state(String id) {
+        return state.getOrDefault(id, LuaValue.NIL);
+    }
+
+    void state(String id, LuaValue value) {
+        state.put(id, value);
+    }
+
+    void emit(String name, List<LuaValue> values) {
+        eventSink.accept(name, values);
+    }
+
+    long tick() {
+        return tick;
+    }
+
+    long graphStep() {
+        return graphStep;
     }
 }

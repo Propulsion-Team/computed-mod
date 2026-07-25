@@ -22,10 +22,20 @@ final class LuaEndpointProxy {
         EndpointDefinition endpoint = ComputedEndpoints.find(endpointId)
                 .orElseThrow(() -> new LuaError("Unknown endpoint: " + endpointId));
         LuaTable proxy = new LuaTable();
+        boolean boundProxy = endpoint.methods().containsKey("methods")
+                && endpoint.methods().containsKey("call");
         proxy.set("methods", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
                 requireSelf(proxy, args);
+                if (boundProxy) {
+                    return LuaEndpointProxy.call(
+                            pending,
+                            endpointId,
+                            target,
+                            endpoint.methods().get("methods"),
+                            List.of());
+                }
                 LuaTable methods = new LuaTable();
                 int index = 1;
                 for (String method : endpoint.methods().keySet()) {
@@ -38,6 +48,18 @@ final class LuaEndpointProxy {
             @Override
             public Varargs invoke(Varargs args) {
                 requireSelf(proxy, args);
+                if (boundProxy) {
+                    List<LuaValue> arguments = new ArrayList<>();
+                    for (int index = 2; index <= args.narg(); index++) {
+                        arguments.add(args.arg(index));
+                    }
+                    return LuaEndpointProxy.call(
+                            pending,
+                            endpointId,
+                            target,
+                            endpoint.methods().get("call"),
+                            arguments);
+                }
                 String methodId = args.arg(2).checkjstring();
                 EndpointMethod method = endpoint.methods().get(methodId);
                 if (method == null) {
@@ -47,34 +69,43 @@ final class LuaEndpointProxy {
                 for (int index = 3; index <= args.narg(); index++) {
                     arguments.add(args.arg(index));
                 }
-                validateArguments(method, arguments);
-                EndpointInvocation invocation =
-                        new EndpointInvocation(
-                                pending.computerId(),
-                                pending.nodeId(),
-                                target,
-                                arguments,
-                                pending.preview(),
-                                pending.endpointHost());
-                EndpointResult result = LuaEndpointProxy.invoke(method, invocation, pending.preview());
-                return switch (result) {
-                    case EndpointResult.Immediate immediate -> {
-                        validateReturns(method, immediate.values());
-                        yield values(immediate.values());
-                    }
-                    case EndpointResult.Unavailable unavailable ->
-                            throw new LuaError(unavailable.reason());
-                    case EndpointResult.Yielded yielded -> {
-                        if (!method.policy().yielding()) {
-                            throw new LuaError("Endpoint returned a continuation but is not declared yielding");
-                        }
-                        pending.yieldFor(yielded.continuation());
-                        yield pending.sandbox().globals().yield(LuaValue.NIL);
-                    }
-                };
+                return LuaEndpointProxy.call(pending, endpointId, target, method, arguments);
             }
         });
         return proxy;
+    }
+
+    private static Varargs call(
+            PendingLuaInvocation pending,
+            String endpointId,
+            String target,
+            EndpointMethod method,
+            List<LuaValue> arguments) {
+        validateArguments(method, arguments);
+        EndpointInvocation invocation =
+                new EndpointInvocation(
+                        pending.computerId(),
+                        pending.nodeId(),
+                        target,
+                        arguments,
+                        pending.preview(),
+                        pending.endpointHost());
+        EndpointResult result = LuaEndpointProxy.invoke(method, invocation, pending.preview());
+        return switch (result) {
+            case EndpointResult.Immediate immediate -> {
+                validateReturns(method, immediate.values());
+                yield values(immediate.values());
+            }
+            case EndpointResult.Unavailable unavailable ->
+                    throw new LuaError(unavailable.reason());
+            case EndpointResult.Yielded yielded -> {
+                if (!method.policy().yielding()) {
+                    throw new LuaError("Endpoint returned a continuation but is not declared yielding");
+                }
+                pending.yieldFor(yielded.continuation());
+                yield pending.sandbox().globals().yield(LuaValue.NIL);
+            }
+        };
     }
 
     private static EndpointResult invoke(

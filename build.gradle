@@ -66,6 +66,13 @@ repositories {
             includeGroup 'dev.ryanhcode.sable'
         }
     }
+    maven {
+        name = 'CC-Tweaked'
+        url = 'https://maven.squiddev.cc'
+        content {
+            includeGroup 'cc.tweaked'
+        }
+    }
 
     flatDir {
         dirs 'libs'
@@ -186,6 +193,14 @@ dependencies {
     // but the SableCompanion class itself only exists at runtime if the companion mod is installed.
     compileOnly "dev.ryanhcode.sable-companion:sable-companion-common-1.21.1:1.5.0"
 
+    compileOnly "cc.tweaked:cc-tweaked-1.21.1-core-api:${cct_version}"
+    compileOnly "cc.tweaked:cc-tweaked-1.21.1-common-api:${cct_version}"
+    compileOnly "cc.tweaked:cc-tweaked-1.21.1-forge-api:${cct_version}"
+    testImplementation "cc.tweaked:cc-tweaked-1.21.1-core-api:${cct_version}"
+    testImplementation "cc.tweaked:cc-tweaked-1.21.1-common-api:${cct_version}"
+    testImplementation "cc.tweaked:cc-tweaked-1.21.1-forge-api:${cct_version}"
+    localRuntime "cc.tweaked:cc-tweaked-1.21.1-forge:${cct_version}"
+
     // Other dev-only jars in /libs (not published); skip Create/Flywheel/Ponder filenames so Maven deps are not duplicated.
     localRuntime fileTree(dir: layout.projectDirectory.dir('libs'), include: ['*.jar']).matching {
         exclude 'flywheel*.jar'
@@ -259,6 +274,20 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'benchmark'
+    }
+}
+
+tasks.register('benchmarkLua', Test) {
+    group = 'verification'
+    description = 'Runs the 500-node Lua scheduler acceptance benchmark.'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'benchmark'
+    }
+    shouldRunAfter tasks.named('test')
 }
 
 def verifyNoLegacyNodeNamespace = tasks.register('verifyNoLegacyNodeNamespace') {

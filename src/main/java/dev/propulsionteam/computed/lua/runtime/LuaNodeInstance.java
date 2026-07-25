@@ -23,9 +23,11 @@ public final class LuaNodeInstance {
     private final LuaSandbox sandbox;
     private final Object endpointHost;
     private final LuaNodeDefinition definition;
-    private final LuaStateCodec stateCodec = new LuaStateCodec();
+    private final boolean endpointCapable;
     private final Map<String, LuaValue> state = new LinkedHashMap<>();
     private final Map<String, LuaValue> outputs = new LinkedHashMap<>();
+    private final LuaInvocationContext context = new LuaInvocationContext();
+    private LuaInvocationWorker worker;
     private PendingLuaInvocation pending;
     private ComputedDiagnostic lastDiagnostic;
     private LuaNodeStatus status = LuaNodeStatus.IDLE;
@@ -35,13 +37,16 @@ public final class LuaNodeInstance {
             UUID nodeId,
             LuaSandbox sandbox,
             LuaNodeDefinition definition,
-            Object endpointHost) {
+            Object endpointHost,
+            boolean endpointCapable) {
         this.computerId = Objects.requireNonNull(computerId, "computerId");
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId");
         this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
         this.definition = Objects.requireNonNull(definition, "definition");
         this.endpointHost = endpointHost;
-        definition.stateDefaults().forEach((id, value) -> state.put(id, copy(value)));
+        this.endpointCapable = endpointCapable;
+        worker = endpointCapable ? new LuaInvocationWorker(sandbox) : null;
+        definition.stateDefaults().forEach((id, value) -> state.put(id, LuaValueCopies.copy(value)));
     }
 
     public LuaInvocationResult run(
@@ -92,32 +97,33 @@ public final class LuaNodeInstance {
     public void cancelYield() {
         if (pending != null) {
             pending = null;
+            resetWorker();
             status = LuaNodeStatus.CANCELLED;
             lastDiagnostic = diagnostic("yield_cancelled", "Yielded invocation was cancelled");
         }
     }
 
     public Map<String, LuaValue> state() {
-        return copyMap(state);
+        return LuaValueCopies.copyMap(state);
     }
 
     public void restoreState(Map<String, LuaValue> restoredState) {
         if (pending != null) {
             throw new IllegalStateException("Cannot restore state while a node is yielded");
         }
-        Map<String, LuaValue> checked = copyMap(restoredState);
+        Map<String, LuaValue> checked = LuaValueCopies.copyMap(restoredState);
         for (String id : checked.keySet()) {
             if (!definition.stateDefaults().containsKey(id)) {
                 throw new IllegalArgumentException("Unknown state id " + id + " for node " + definition.id());
             }
         }
         state.clear();
-        definition.stateDefaults().forEach((id, value) -> state.put(id, copy(value)));
+        definition.stateDefaults().forEach((id, value) -> state.put(id, LuaValueCopies.copy(value)));
         state.putAll(checked);
     }
 
     public Map<String, LuaValue> outputs() {
-        return copyMap(outputs);
+        return LuaValueCopies.copyMap(outputs);
     }
 
     public LuaNodeStatus status() {
@@ -136,7 +142,7 @@ public final class LuaNodeInstance {
             long graphStep,
             boolean preview,
             BiConsumer<String, List<LuaValue>> eventSink) {
-        return new PendingLuaInvocation(
+        PendingLuaInvocation created = new PendingLuaInvocation(
                 computerId,
                 nodeId,
                 sandbox,
@@ -144,12 +150,16 @@ public final class LuaNodeInstance {
                 endpointHost,
                 tick,
                 graphStep,
-                copyMap(inputs),
-                copyMap(fields),
-                copyMap(state),
-                copyMap(outputs),
+                LuaValueCopies.copyMap(inputs),
+                LuaValueCopies.copyMap(fields),
+                LuaValueCopies.copyMap(state),
+                LuaValueCopies.copyMap(outputs),
                 eventSink == null ? (name, values) -> {} : eventSink,
-                callback);
+                callback,
+                worker,
+                context);
+        context.bind(created);
+        return created;
     }
 
     private LuaInvocationResult advance(java.util.function.Supplier<Varargs> action) {
@@ -157,6 +167,12 @@ public final class LuaNodeInstance {
             Varargs result = action.get();
             if (!result.arg1().toboolean()) {
                 return failAndDiscard("runtime_error", result.arg(2).tojstring());
+            }
+            if (pending.completed(result)) {
+                commitPending();
+                status = LuaNodeStatus.IDLE;
+                lastDiagnostic = null;
+                return snapshot();
             }
             if (pending.suspended()) {
                 if (!pending.waiting()) {
@@ -166,20 +182,19 @@ public final class LuaNodeInstance {
                 lastDiagnostic = null;
                 return snapshot();
             }
-            commitPending();
-            status = LuaNodeStatus.IDLE;
-            lastDiagnostic = null;
-            return snapshot();
+            return failAndDiscard("runtime_error", "Lua invocation worker stopped unexpectedly");
         } catch (LuaError error) {
             return failAndDiscard("runtime_error", error.getMessage());
+        } catch (StackOverflowError error) {
+            return failAndDiscard("runtime_error", "Lua node exceeded the recursion limit");
         } catch (RuntimeException exception) {
             return failAndDiscard("runtime_error", exception.getMessage());
         }
     }
 
     private void commitPending() {
-        Map<String, LuaValue> checkedState = copyMap(pending.state());
-        Map<String, LuaValue> checkedOutputs = copyMap(pending.outputs());
+        Map<String, LuaValue> checkedState = LuaValueCopies.copyMap(pending.state());
+        Map<String, LuaValue> checkedOutputs = LuaValueCopies.copyMap(pending.outputs());
         state.clear();
         state.putAll(checkedState);
         outputs.clear();
@@ -189,9 +204,16 @@ public final class LuaNodeInstance {
 
     private LuaInvocationResult failAndDiscard(String code, String message) {
         pending = null;
+        resetWorker();
         status = LuaNodeStatus.FAILED;
         lastDiagnostic = diagnostic(code, message);
         return snapshot();
+    }
+
+    private void resetWorker() {
+        if (endpointCapable) {
+            worker = new LuaInvocationWorker(sandbox);
+        }
     }
 
     private LuaInvocationResult failure(String code, String message) {
@@ -213,18 +235,7 @@ public final class LuaNodeInstance {
     private LuaInvocationResult snapshot() {
         List<ComputedDiagnostic> diagnostics =
                 lastDiagnostic == null ? List.of() : List.of(lastDiagnostic);
-        return new LuaInvocationResult(status, outputs(), diagnostics);
+        return new LuaInvocationResult(status, outputs, diagnostics);
     }
 
-    private Map<String, LuaValue> copyMap(Map<String, LuaValue> source) {
-        Map<String, LuaValue> copied = new LinkedHashMap<>();
-        if (source != null) {
-            source.forEach((id, value) -> copied.put(id, copy(value)));
-        }
-        return copied;
-    }
-
-    private LuaValue copy(LuaValue value) {
-        return stateCodec.decode(stateCodec.encode(value));
-    }
 }

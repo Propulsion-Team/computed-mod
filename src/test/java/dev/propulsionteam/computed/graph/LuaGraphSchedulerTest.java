@@ -147,6 +147,35 @@ class LuaGraphSchedulerTest {
                 .anyMatch(diagnostic -> diagnostic.code().equals("missing_definition")));
     }
 
+    @Test
+    void rejectsMaliciousEmbeddedSourceBeforeItCanBecomeExecutable() {
+        LuaDefinitionSource invalid = LuaDefinitionSource.embedded(
+                1,
+                "example:malicious",
+                "return os.execute('anything')");
+        UUID nodeId = uuid(21);
+        GraphNode node = new GraphNode(
+                nodeId,
+                invalid.id(),
+                invalid.hash(),
+                0,
+                0,
+                List.of(),
+                Map.of());
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(uuid(103), List.of(node), List.of()),
+                Map.of(invalid.id(), invalid),
+                Map.of(),
+                null);
+
+        LuaGraphTickResult result = new LuaGraphScheduler(program, uuid(204), null).tick(false);
+
+        assertTrue(result.outputs().getOrDefault(nodeId, Map.of()).isEmpty());
+        assertTrue(result.diagnostics().stream()
+                .anyMatch(diagnostic -> diagnostic.code().equals("definition_load_failed")));
+    }
+
     private static PortSnapshot port(String id, PortDirection direction, ConnectionType type) {
         return new PortSnapshot(id, direction, type, id);
     }

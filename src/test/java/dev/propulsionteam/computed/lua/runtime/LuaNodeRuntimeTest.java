@@ -67,4 +67,27 @@ class LuaNodeRuntimeTest {
         assertFalse(result.diagnostics().isEmpty());
         assertFalse(result.outputs().containsKey("value"));
     }
+
+    @Test
+    void abortsExcessiveRecursionWithoutEscapingTheRuntime() {
+        LuaInstructionBudget budget = new LuaInstructionBudget(50_000, 100_000);
+        LuaComputerRuntime runtime = new LuaComputerRuntime(UUID.randomUUID(), budget);
+        LuaNodeInstance node = runtime.createNode(UUID.randomUUID(), 1, """
+                local node = computed.node(1, "example:recursion", "Recursion")
+                node:on_run(function(ctx)
+                    local function recurse()
+                        return recurse()
+                    end
+                    recurse()
+                end)
+                return node
+                """);
+        runtime.beginTick(1);
+
+        LuaInvocationResult result =
+                node.run(Map.of(), Map.of(), 1, runtime.nextGraphStep(), false, null);
+
+        assertEquals(LuaNodeStatus.FAILED, result.status());
+        assertFalse(result.diagnostics().getFirst().message().isBlank());
+    }
 }

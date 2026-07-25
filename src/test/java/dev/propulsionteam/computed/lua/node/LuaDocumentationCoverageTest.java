@@ -41,9 +41,34 @@ class LuaDocumentationCoverageTest {
 
         BuiltinEndpoints.register();
         String endpointReference = Files.readString(Path.of("docs/lua/endpoint-api.md"));
+        List<String> javaHeadings = List.of(
+                "ComputedEndpoints.register(id, registration)",
+                "EndpointBuilder.method(methodId, signature, policy, handler)",
+                "EndpointBuilder.method(methodId, signature, policy, handler, previewFixture, documentation)",
+                "ComputedEndpoints.find(id)",
+                "ComputedEndpoints.definitions()",
+                "EndpointSignature.of(arguments, returns)",
+                "EndpointPolicy.computerThread(sideEffect, previewAvailable)",
+                "EndpointResult.immediate(values...)",
+                "EndpointResult.yielded(continuation)",
+                "EndpointResult.unavailable(reason)",
+                "EndpointRuntimeLifecycle.register(listener)");
+        javaHeadings.forEach(heading -> assertTrue(endpointReference.contains("## " + heading), heading));
         ComputedEndpoints.definitions().stream()
                 .filter(endpoint -> endpoint.id().startsWith("computed:"))
                 .forEach(endpoint -> endpoint.methods().keySet().forEach(method ->
                         assertTrue(endpointReference.contains("## " + endpoint.id() + '/' + method))));
+        List<String> integrationHeadings = List.of(
+                "create:kinetic/speed",
+                "create:kinetic/stress",
+                "create:kinetic/capacity",
+                "create:redstone_link/receive",
+                "create:redstone_link/transmit",
+                "computercraft:channel/read",
+                "computercraft:channel/publish",
+                "computercraft:peripheral/methods",
+                "computercraft:peripheral/call");
+        integrationHeadings.forEach(heading ->
+                assertTrue(endpointReference.contains("## " + heading), heading));
     }
 }

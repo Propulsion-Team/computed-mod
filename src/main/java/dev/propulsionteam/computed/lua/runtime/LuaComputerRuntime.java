@@ -42,7 +42,13 @@ public final class LuaComputerRuntime {
         Objects.requireNonNull(nodeId, "nodeId");
         LuaCompiledSource compiled = compiler.compile(apiVersion, source);
         LuaNodeDefinition definition = definitionLoader.load(compiled, sandbox);
-        LuaNodeInstance instance = new LuaNodeInstance(computerId, nodeId, sandbox, definition, endpointHost);
+        LuaNodeInstance instance = new LuaNodeInstance(
+                computerId,
+                nodeId,
+                sandbox,
+                definition,
+                endpointHost,
+                source.contains("endpoint"));
         LuaNodeInstance previous = instances.putIfAbsent(nodeId, instance);
         if (previous != null) {
             throw new IllegalStateException("Lua node instance is already registered: " + nodeId);
@@ -73,6 +79,7 @@ public final class LuaComputerRuntime {
         this.tick = Math.max(0, tick);
         graphStep = 0;
         budget.beginTick();
+        dev.propulsionteam.computed.lua.endpoint.EndpointRuntimeLifecycle.tick(computerId, endpointHost);
     }
 
     public long nextGraphStep() {
@@ -94,5 +101,6 @@ public final class LuaComputerRuntime {
     public void unload() {
         instances.values().forEach(LuaNodeInstance::cancelYield);
         instances.clear();
+        dev.propulsionteam.computed.lua.endpoint.EndpointRuntimeLifecycle.unload(computerId, endpointHost);
     }
 }
