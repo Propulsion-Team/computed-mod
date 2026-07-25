@@ -169,6 +169,7 @@ configurations {
 dependencies {
     implementation 'org.luaj:luaj-jse:3.0.1'
     jarJar 'org.luaj:luaj-jse:3.0.1'
+    additionalRuntimeClasspath 'org.luaj:luaj-jse:3.0.1'
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
