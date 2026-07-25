@@ -49,10 +49,19 @@ final class LuaEndpointProxy {
                 }
                 validateArguments(method, arguments);
                 EndpointInvocation invocation =
-                        new EndpointInvocation(pending.computerId(), pending.nodeId(), target, arguments, pending.preview());
+                        new EndpointInvocation(
+                                pending.computerId(),
+                                pending.nodeId(),
+                                target,
+                                arguments,
+                                pending.preview(),
+                                pending.endpointHost());
                 EndpointResult result = LuaEndpointProxy.invoke(method, invocation, pending.preview());
                 return switch (result) {
-                    case EndpointResult.Immediate immediate -> values(immediate.values());
+                    case EndpointResult.Immediate immediate -> {
+                        validateReturns(method, immediate.values());
+                        yield values(immediate.values());
+                    }
                     case EndpointResult.Unavailable unavailable ->
                             throw new LuaError(unavailable.reason());
                     case EndpointResult.Yielded yielded -> {
@@ -107,6 +116,21 @@ final class LuaEndpointProxy {
 
     private static Varargs values(List<LuaValue> values) {
         return LuaValue.varargsOf(values.toArray(LuaValue[]::new));
+    }
+
+    private static void validateReturns(EndpointMethod method, List<LuaValue> values) {
+        List<EndpointType> expected = method.signature().returns();
+        if (values.size() != expected.size()) {
+            throw new LuaError(
+                    "Endpoint method " + method.id() + " returned " + values.size() + " values; expected "
+                            + expected.size());
+        }
+        for (int index = 0; index < expected.size(); index++) {
+            if (!LuaValueValidator.matches(expected.get(index), values.get(index))) {
+                throw new LuaError("Endpoint return " + (index + 1) + " must be "
+                        + expected.get(index).name().toLowerCase());
+            }
+        }
     }
 
     private static void requireSelf(LuaTable proxy, Varargs args) {

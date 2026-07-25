@@ -20,6 +20,7 @@ final class PendingLuaInvocation {
     private final UUID nodeId;
     private final LuaSandbox sandbox;
     private final boolean preview;
+    private final Object endpointHost;
     private final long tick;
     private final long graphStep;
     private final Map<String, LuaValue> inputs;
@@ -35,6 +36,7 @@ final class PendingLuaInvocation {
             UUID nodeId,
             LuaSandbox sandbox,
             boolean preview,
+            Object endpointHost,
             long tick,
             long graphStep,
             Map<String, LuaValue> inputs,
@@ -47,6 +49,7 @@ final class PendingLuaInvocation {
         this.nodeId = nodeId;
         this.sandbox = sandbox;
         this.preview = preview;
+        this.endpointHost = endpointHost;
         this.tick = tick;
         this.graphStep = graphStep;
         this.inputs = new LinkedHashMap<>(inputs);
@@ -147,6 +150,10 @@ final class PendingLuaInvocation {
 
     boolean preview() {
         return preview;
+    }
+
+    Object endpointHost() {
+        return endpointHost;
     }
 
     private static LuaValue value(Map<String, LuaValue> values, LuaValue key) {

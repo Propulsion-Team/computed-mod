@@ -21,6 +21,7 @@ public final class LuaNodeInstance {
     private final UUID computerId;
     private final UUID nodeId;
     private final LuaSandbox sandbox;
+    private final Object endpointHost;
     private final LuaNodeDefinition definition;
     private final LuaStateCodec stateCodec = new LuaStateCodec();
     private final Map<String, LuaValue> state = new LinkedHashMap<>();
@@ -33,11 +34,13 @@ public final class LuaNodeInstance {
             UUID computerId,
             UUID nodeId,
             LuaSandbox sandbox,
-            LuaNodeDefinition definition) {
+            LuaNodeDefinition definition,
+            Object endpointHost) {
         this.computerId = Objects.requireNonNull(computerId, "computerId");
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId");
         this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
         this.definition = Objects.requireNonNull(definition, "definition");
+        this.endpointHost = endpointHost;
         definition.stateDefaults().forEach((id, value) -> state.put(id, copy(value)));
     }
 
@@ -98,6 +101,21 @@ public final class LuaNodeInstance {
         return copyMap(state);
     }
 
+    public void restoreState(Map<String, LuaValue> restoredState) {
+        if (pending != null) {
+            throw new IllegalStateException("Cannot restore state while a node is yielded");
+        }
+        Map<String, LuaValue> checked = copyMap(restoredState);
+        for (String id : checked.keySet()) {
+            if (!definition.stateDefaults().containsKey(id)) {
+                throw new IllegalArgumentException("Unknown state id " + id + " for node " + definition.id());
+            }
+        }
+        state.clear();
+        definition.stateDefaults().forEach((id, value) -> state.put(id, copy(value)));
+        state.putAll(checked);
+    }
+
     public Map<String, LuaValue> outputs() {
         return copyMap(outputs);
     }
@@ -123,6 +141,7 @@ public final class LuaNodeInstance {
                 nodeId,
                 sandbox,
                 preview,
+                endpointHost,
                 tick,
                 graphStep,
                 copyMap(inputs),

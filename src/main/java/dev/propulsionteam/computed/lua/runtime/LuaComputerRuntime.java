@@ -18,17 +18,23 @@ public final class LuaComputerRuntime {
     private final LuaDefinitionLoader definitionLoader = new LuaDefinitionLoader();
     private final LuaInstructionBudget budget;
     private final LuaSandbox sandbox;
+    private final Object endpointHost;
     private final Map<UUID, LuaNodeInstance> instances = new LinkedHashMap<>();
     private long tick;
     private long graphStep;
 
     public LuaComputerRuntime(UUID computerId) {
-        this(computerId, new LuaInstructionBudget());
+        this(computerId, new LuaInstructionBudget(), null);
     }
 
     public LuaComputerRuntime(UUID computerId, LuaInstructionBudget budget) {
+        this(computerId, budget, null);
+    }
+
+    public LuaComputerRuntime(UUID computerId, LuaInstructionBudget budget, Object endpointHost) {
         this.computerId = Objects.requireNonNull(computerId, "computerId");
         this.budget = Objects.requireNonNull(budget, "budget");
+        this.endpointHost = endpointHost;
         sandbox = new LuaSandbox(budget);
     }
 
@@ -36,7 +42,7 @@ public final class LuaComputerRuntime {
         Objects.requireNonNull(nodeId, "nodeId");
         LuaCompiledSource compiled = compiler.compile(apiVersion, source);
         LuaNodeDefinition definition = definitionLoader.load(compiled, sandbox);
-        LuaNodeInstance instance = new LuaNodeInstance(computerId, nodeId, sandbox, definition);
+        LuaNodeInstance instance = new LuaNodeInstance(computerId, nodeId, sandbox, definition, endpointHost);
         LuaNodeInstance previous = instances.putIfAbsent(nodeId, instance);
         if (previous != null) {
             throw new IllegalStateException("Lua node instance is already registered: " + nodeId);
@@ -71,6 +77,10 @@ public final class LuaComputerRuntime {
 
     public long nextGraphStep() {
         return ++graphStep;
+    }
+
+    public long graphStep() {
+        return graphStep;
     }
 
     public long tick() {

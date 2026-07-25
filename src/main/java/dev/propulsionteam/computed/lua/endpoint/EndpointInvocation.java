@@ -10,7 +10,8 @@ public record EndpointInvocation(
         UUID nodeId,
         String target,
         List<LuaValue> arguments,
-        boolean preview) {
+        boolean preview,
+        Object host) {
 
     public EndpointInvocation {
         Objects.requireNonNull(computerId, "computerId");
