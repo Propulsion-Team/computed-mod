@@ -99,6 +99,16 @@ public final class LuaNodeEditorScreen extends Screen {
     }
 
     @Override
+    public void renderBackground(
+            GuiGraphics graphics,
+            int mouseX,
+            int mouseY,
+            float partialTick) {
+        // This screen supplies its own opaque background. The vanilla pass would
+        // apply the in-world menu blur after the editor has already been drawn.
+    }
+
+    @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 0) {
             return true;

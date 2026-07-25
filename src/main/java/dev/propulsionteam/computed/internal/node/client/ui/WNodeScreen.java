@@ -289,6 +289,16 @@ public class WNodeScreen extends Screen {
     }
 
     @Override
+    public void renderBackground(
+            GuiGraphics graphics,
+            int mouseX,
+            int mouseY,
+            float partialTick) {
+        // The editor paints an opaque canvas before Screen#render is invoked. Letting
+        // the vanilla background pass run here would blur that canvas every frame.
+    }
+
+    @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         int graphX = screenToGraphX(mouseX);
         int graphY = screenToGraphY(mouseY);
