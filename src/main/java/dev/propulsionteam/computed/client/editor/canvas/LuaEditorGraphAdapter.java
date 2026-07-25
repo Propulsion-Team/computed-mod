@@ -6,6 +6,8 @@ import dev.propulsionteam.computed.graph.GraphConnection;
 import dev.propulsionteam.computed.graph.GraphNode;
 import dev.propulsionteam.computed.graph.GraphPoint;
 import dev.propulsionteam.computed.graph.LuaDefinitionSource;
+import dev.propulsionteam.computed.graph.PortDirection;
+import dev.propulsionteam.computed.graph.PortSnapshot;
 import dev.propulsionteam.computed.internal.node.api.WConnection;
 import dev.propulsionteam.computed.internal.node.api.WGraph;
 import dev.propulsionteam.computed.internal.node.api.WNode;
@@ -14,11 +16,13 @@ import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
 import dev.propulsionteam.computed.lua.node.LuaDefinitionLoader;
 import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
 import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
+import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class LuaEditorGraphAdapter {
@@ -33,7 +37,14 @@ public final class LuaEditorGraphAdapter {
             LuaNodeDefinition definition = definition(definitions.get(node.definitionId()));
             String title = definition == null ? node.definitionId() : definition.title();
             boolean stateBoundary = definition != null && !definition.stateDefaults().isEmpty();
-            LuaEditorNode editorNode = new LuaEditorNode(node, title, stateBoundary);
+            LuaEditorNode editorNode = new LuaEditorNode(
+                    node,
+                    title,
+                    stateBoundary,
+                    definition == null ? "utility" : definition.category(),
+                    definition == null
+                            ? dev.propulsionteam.computed.lua.node.NodeStyle.STANDARD
+                            : definition.style());
             nodes.put(node.id(), editorNode);
             graph.addNode(editorNode);
         }
@@ -72,6 +83,9 @@ public final class LuaEditorGraphAdapter {
         List<GraphNode> nodes = new ArrayList<>();
         for (WNode editorNode : editor.getNodes()) {
             GraphNode original = baseNodes.get(editorNode.getId());
+            if (original == null && editorNode instanceof LuaEditorNode luaNode) {
+                original = luaNode.source();
+            }
             if (original == null) {
                 continue;
             }
@@ -120,6 +134,154 @@ public final class LuaEditorGraphAdapter {
                 base.library(),
                 base.persistentState(),
                 base.metadata());
+    }
+
+    public static LuaEditorNode createEditorNode(
+            ComputedProgramV3 program,
+            String definitionId,
+            int x,
+            int y) {
+        LuaDefinitionSource source = definitions(program).get(definitionId);
+        LuaNodeDefinition definition = definition(source);
+        if (source == null || definition == null) {
+            return null;
+        }
+        List<PortSnapshot> ports = ports(definition);
+        Map<String, net.minecraft.nbt.CompoundTag> fields = defaultFields(definition);
+        GraphNode node = new GraphNode(
+                UUID.randomUUID(),
+                source.id(),
+                source.hash(),
+                x,
+                y,
+                ports,
+                fields);
+        return new LuaEditorNode(
+                node,
+                definition.title(),
+                !definition.stateDefaults().isEmpty(),
+                definition.category(),
+                definition.style());
+    }
+
+    public static ComputedProgramV3 replaceDefinition(
+            ComputedProgramV3 program,
+            LuaDefinitionSource replacement) {
+        LuaNodeDefinition definition = definition(replacement);
+        if (definition == null || !definition.id().equals(replacement.id())) {
+            throw new IllegalArgumentException("Lua source does not return the replacement definition ID");
+        }
+        Map<String, LuaDefinitionSource> library = new LinkedHashMap<>(program.library());
+        library.put(replacement.id(), replacement);
+        List<PortSnapshot> nextPorts = ports(definition);
+        Map<String, PortSnapshot> nextPortIndex = new HashMap<>();
+        nextPorts.forEach(port -> nextPortIndex.put(port.direction() + "\u0000" + port.id(), port));
+        List<GraphNode> nodes = new ArrayList<>();
+        Set<UUID> replacedNodes = new java.util.HashSet<>();
+        for (GraphNode node : program.rootGraph().nodes()) {
+            if (!node.definitionId().equals(replacement.id())) {
+                nodes.add(node);
+                continue;
+            }
+            replacedNodes.add(node.id());
+            Map<String, net.minecraft.nbt.CompoundTag> fields = defaultFields(definition);
+            node.fields().forEach((id, value) -> {
+                if (fields.containsKey(id)) {
+                    fields.put(id, value);
+                }
+            });
+            nodes.add(new GraphNode(
+                    node.id(),
+                    replacement.id(),
+                    replacement.hash(),
+                    node.x(),
+                    node.y(),
+                    nextPorts,
+                    fields));
+        }
+        Map<UUID, GraphNode> nodeIndex = new HashMap<>();
+        nodes.forEach(node -> nodeIndex.put(node.id(), node));
+        List<GraphConnection> connections = program.rootGraph().connections().stream()
+                .filter(connection -> compatible(connection, nodeIndex, nextPortIndex, replacedNodes))
+                .toList();
+        Map<UUID, net.minecraft.nbt.CompoundTag> state =
+                new LinkedHashMap<>(program.persistentState());
+        replacedNodes.forEach(state::remove);
+        return new ComputedProgramV3(
+                program.revision(),
+                new ComputedGraph(program.rootGraph().id(), nodes, connections),
+                library,
+                state,
+                program.metadata());
+    }
+
+    public static LuaEditorNode duplicateEditorNode(LuaEditorNode source, int x, int y) {
+        GraphNode original = source.source();
+        GraphNode duplicate = new GraphNode(
+                UUID.randomUUID(),
+                original.definitionId(),
+                original.definitionHash(),
+                x,
+                y,
+                original.ports(),
+                original.fields());
+        return new LuaEditorNode(
+                duplicate,
+                source.getTitle(),
+                source.isStateBoundary(),
+                source.category(),
+                source.style());
+    }
+
+    public static Map<String, LuaDefinitionSource> definitions(ComputedProgramV3 program) {
+        Map<String, LuaDefinitionSource> definitions = new LinkedHashMap<>(BundledLuaLibrary.load());
+        definitions.putAll(program.library());
+        return java.util.Collections.unmodifiableMap(definitions);
+    }
+
+    private static List<PortSnapshot> ports(LuaNodeDefinition definition) {
+        List<PortSnapshot> ports = new ArrayList<>();
+        definition.inputs().forEach(port -> ports.add(new PortSnapshot(
+                port.id(),
+                PortDirection.INPUT,
+                port.type(),
+                port.id())));
+        definition.outputs().forEach(port -> ports.add(new PortSnapshot(
+                port.id(),
+                PortDirection.OUTPUT,
+                port.type(),
+                port.id())));
+        return List.copyOf(ports);
+    }
+
+    private static Map<String, net.minecraft.nbt.CompoundTag> defaultFields(
+            LuaNodeDefinition definition) {
+        Map<String, net.minecraft.nbt.CompoundTag> fields = new LinkedHashMap<>();
+        LuaStateCodec codec = new LuaStateCodec();
+        definition.fields().forEach(field -> fields.put(field.id(), codec.encode(field.defaultValue())));
+        return fields;
+    }
+
+    private static boolean compatible(
+            GraphConnection connection,
+            Map<UUID, GraphNode> nodes,
+            Map<String, PortSnapshot> replacementPorts,
+            Set<UUID> replacedNodes) {
+        GraphNode source = nodes.get(connection.sourceNode());
+        GraphNode target = nodes.get(connection.targetNode());
+        if (source == null || target == null) {
+            return false;
+        }
+        PortSnapshot sourcePort = port(source, PortDirection.OUTPUT, connection.sourcePort());
+        PortSnapshot targetPort = port(target, PortDirection.INPUT, connection.targetPort());
+        return sourcePort != null && targetPort != null && sourcePort.type() == targetPort.type();
+    }
+
+    private static PortSnapshot port(GraphNode node, PortDirection direction, String id) {
+        return node.ports().stream()
+                .filter(port -> port.direction() == direction && port.id().equals(id))
+                .findFirst()
+                .orElse(null);
     }
 
     private static LuaNodeDefinition definition(LuaDefinitionSource source) {

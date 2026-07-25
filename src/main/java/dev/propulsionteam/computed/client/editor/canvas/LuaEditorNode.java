@@ -3,21 +3,33 @@ package dev.propulsionteam.computed.client.editor.canvas;
 import dev.propulsionteam.computed.graph.GraphNode;
 import dev.propulsionteam.computed.graph.PortDirection;
 import dev.propulsionteam.computed.graph.PortSnapshot;
+import dev.propulsionteam.computed.client.renderer.node.BedrockNodeRenderer;
 import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.internal.node.api.WPin;
 import dev.propulsionteam.computed.lua.node.ConnectionType;
+import dev.propulsionteam.computed.lua.node.NodeStyle;
 import java.util.UUID;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 
 public final class LuaEditorNode extends WNode {
     private final GraphNode source;
     private final boolean stateBoundary;
+    private final String category;
+    private final NodeStyle style;
 
-    public LuaEditorNode(GraphNode source, String title, boolean stateBoundary) {
+    public LuaEditorNode(
+            GraphNode source,
+            String title,
+            boolean stateBoundary,
+            String category,
+            NodeStyle style) {
         super(ResourceLocation.parse(source.definitionId()), title, source.x(), source.y());
         this.source = source;
         this.stateBoundary = stateBoundary;
+        this.category = category == null ? "utility" : category;
+        this.style = style == null ? NodeStyle.STANDARD : style;
         for (PortSnapshot port : source.ports()) {
             WPin.DataType dataType = dataType(port.type());
             int color = color(port.type());
@@ -38,6 +50,19 @@ public final class LuaEditorNode extends WNode {
 
     public GraphNode source() {
         return source;
+    }
+
+    public String category() {
+        return category;
+    }
+
+    public NodeStyle style() {
+        return style;
+    }
+
+    @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        BedrockNodeRenderer.render(graphics, this, category, false, false, mouseX, mouseY);
     }
 
     @Override

@@ -39,6 +39,7 @@ public class WGraph {
     private final List<WSection> sections = new ArrayList<>();
     /** UUID→node lookup; kept in sync with {@link #nodes} to avoid O(n) stream scans in hot render paths. */
     private final Map<UUID, WNode> nodeIndex = new HashMap<>();
+    private final Map<UUID, WNode> nodeArchive = new HashMap<>();
     private boolean pinSchemaRefreshPending;
     private long connectionGeometryRevision;
     private final Map<UUID, List<WConnection>> outgoingConnections = new HashMap<>();
@@ -172,6 +173,7 @@ public class WGraph {
     public void addNode(WNode node) {
         nodes.add(node);
         nodeIndex.put(node.getId(), node);
+        nodeArchive.put(node.getId(), node);
         node.bindOwningGraph(this);
         dedupeFunctionBoundaryNodes();
         pruneDanglingConnections();
@@ -263,11 +265,21 @@ public class WGraph {
         for (int i = 0; i < nodesTag.size(); i++) {
             net.minecraft.nbt.CompoundTag nTag = nodesTag.getCompound(i);
             net.minecraft.resources.ResourceLocation type = net.minecraft.resources.ResourceLocation.parse(nTag.getString("typeId"));
-            WNode node = NodeRegistry.createNode(type, nTag.getInt("x"), nTag.getInt("y"));
+            UUID nodeId = nTag.contains("id")
+                    ? UUID.fromString(nTag.getString("id"))
+                    : UUID.randomUUID();
+            WNode node = nodeArchive.get(nodeId);
+            if (node != null && !node.getTypeId().equals(type)) {
+                node = null;
+            }
+            if (node == null) {
+                node = NodeRegistry.createNode(type, nTag.getInt("x"), nTag.getInt("y"));
+            }
             if (node == null) node = MissingNode.fromLegacyTag(type, nTag);
             node.load(nTag);
             nodes.add(node);
             nodeIndex.put(node.getId(), node);
+            nodeArchive.put(node.getId(), node);
             node.bindOwningGraph(this);
         }
         

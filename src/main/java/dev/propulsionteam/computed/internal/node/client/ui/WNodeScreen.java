@@ -500,6 +500,94 @@ public class WNodeScreen extends Screen {
         return List.of();
     }
 
+    protected boolean minimalCanvasMode() {
+        return false;
+    }
+
+    protected void openNodeExplorer(int screenX, int screenY, int graphX, int graphY) {}
+
+    protected WNode createDuplicateNode(WNode source, int x, int y) {
+        CompoundTag tag = source.save().copy();
+        tag.remove("id");
+        tag.putInt("x", x);
+        tag.putInt("y", y);
+        ResourceLocation type = ResourceLocation.parse(tag.getString("typeId"));
+        WNode copy = NodeRegistry.createNode(type, x, y);
+        if (copy != null) {
+            copy.load(tag);
+        }
+        return copy;
+    }
+
+    protected final void addNodeToCanvas(WNode node) {
+        if (node == null) {
+            return;
+        }
+        recordCheckpointBeforeEdit();
+        graph.getNodes().forEach(existing -> existing.setSelected(false));
+        graph.addNode(node);
+        node.setSelected(true);
+        selectedNode = node;
+        updateIndexedNode(node);
+    }
+
+    protected final void replaceCanvasGraph(WGraph replacement) {
+        recordCheckpointBeforeEdit();
+        graph = replacement;
+        selectedNode = null;
+        invalidateEditorInfrastructure();
+    }
+
+    protected final boolean hasSelectedNodes() {
+        return anyNodeSelectedForDock();
+    }
+
+    protected final boolean selectNodeAtGraphPoint(int graphX, int graphY) {
+        for (WNode node : nodesAtGraphPoint(graphX, graphY, true)) {
+            if (graphX >= node.getX()
+                    && graphX <= node.getX() + node.getWidth()
+                    && graphY >= node.getY()
+                    && graphY <= node.getY() + node.getHeight()) {
+                if (!node.isSelected()) {
+                    graph.getNodes().forEach(existing -> existing.setSelected(false));
+                    node.setSelected(true);
+                    selectedNode = node;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected final void cloneSelectedNodes() {
+        duplicateSelectedNodes();
+    }
+
+    protected final void unlinkSelectedNodes() {
+        disconnectSelectedNodes();
+    }
+
+    protected final void removeSelectedNodes() {
+        deleteSelectedNodes();
+    }
+
+    protected final int editorGraphX(double screenX) {
+        return screenToGraphX(screenX);
+    }
+
+    protected final int editorGraphY(double screenY) {
+        return screenToGraphY(screenY);
+    }
+
+    protected final void adjustEditorZoom(double amount, double screenX, double screenY) {
+        double graphX = screenToGraphX(screenX);
+        double graphY = screenToGraphY(screenY);
+        zoom = (float) Mth.clamp(zoom + amount, 0.1, 3.0);
+        panX += screenToGraphX(screenX) - graphX;
+        panY += screenToGraphY(screenY) - graphY;
+        invalidateEditorInfrastructure();
+    }
+
     private int functionPickerPlacedSectionHeight() {
         List<Component> lines = placedPeripheralHudLines();
         if (lines.isEmpty()) {
@@ -2085,14 +2173,16 @@ public class WNodeScreen extends Screen {
     }
 
     private int paletteWidth() {
-        return categoryRailVisible ? CATEGORY_RAIL_W + (openPaletteCategory == null ? 0 : CATEGORY_PANEL_W) : 0;
+        return minimalCanvasMode()
+                ? 0
+                : categoryRailVisible ? CATEGORY_RAIL_W + (openPaletteCategory == null ? 0 : CATEGORY_PANEL_W) : 0;
     }
 
     private boolean isCanvasPoint(double x, double y) {
         int inset = viewInset();
         return isInsideEditorPanel(x, y)
                 && x >= inset + paletteWidth()
-                && y >= inset + TOP_BAR_H
+                && y >= inset + (minimalCanvasMode() ? 0 : TOP_BAR_H)
                 && x < gridRight()
                 && y < gridBottom();
     }
@@ -2635,35 +2725,40 @@ public class WNodeScreen extends Screen {
 
         // The final graph pixel aligns with the top-bar controls; the remaining two pixels are
         // deliberate breathing room inside the outer beveled panel.
-        graphics.vLine(graphRight - 1, py1 + TOP_BAR_H, graphBottom - 1, ComputedEditorTheme.BORDER_DEFAULT);
+        if (!minimalCanvasMode()) {
+            graphics.vLine(
+                    graphRight - 1,
+                    py1 + TOP_BAR_H,
+                    graphBottom - 1,
+                    ComputedEditorTheme.BORDER_DEFAULT);
+        }
         graphics.hLine(px1, graphRight - 1, graphBottom - 1, ComputedEditorTheme.BORDER_DEFAULT);
 
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 2500);
 
-        renderNodeActionDock(graphics, mouseX, mouseY, ease);
-        renderLodInteractionHint(graphics, detailLevel);
-
-        renderSectionsSidebar(graphics, mouseX, mouseY, ease);
-        renderDiagnosticsPanel(graphics, mouseX, mouseY, ease);
-        renderTopBar(graphics, mouseX, mouseY);
-        renderCategorySidebar(graphics, mouseX, mouseY);
-        renderSchematicToolbar(graphics, mouseX, mouseY, ease);
-
-        if (isSearching) {
-            rebuildSearchHitRows();
-            if (searchQuery.trim().isEmpty()) {
-                layoutBrowseMenuForPointer(mouseX, mouseY);
-            } else {
-                menuFlyoutPath.clear();
-                stickyBrowseRootId = null;
-                clampSearchMenuOnScreen();
+        if (!minimalCanvasMode()) {
+            renderNodeActionDock(graphics, mouseX, mouseY, ease);
+            renderLodInteractionHint(graphics, detailLevel);
+            renderSectionsSidebar(graphics, mouseX, mouseY, ease);
+            renderDiagnosticsPanel(graphics, mouseX, mouseY, ease);
+            renderTopBar(graphics, mouseX, mouseY);
+            renderCategorySidebar(graphics, mouseX, mouseY);
+            renderSchematicToolbar(graphics, mouseX, mouseY, ease);
+            if (isSearching) {
+                rebuildSearchHitRows();
+                if (searchQuery.trim().isEmpty()) {
+                    layoutBrowseMenuForPointer(mouseX, mouseY);
+                } else {
+                    menuFlyoutPath.clear();
+                    stickyBrowseRootId = null;
+                    clampSearchMenuOnScreen();
+                }
+                renderSearchMenu(graphics);
             }
-            renderSearchMenu(graphics);
+            renderSectionColorPickerOverlay(graphics);
+            renderContextMenu(graphics, mouseX, mouseY);
         }
-
-        renderSectionColorPickerOverlay(graphics);
-        renderContextMenu(graphics, mouseX, mouseY);
         renderPendingEditorTooltip(graphics);
 
         graphics.pose().popPose();
@@ -4817,7 +4912,11 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (!exportDialogOpen && !importDialogOpen && !newFunctionNamingOpen && !itemPickerOpen) {
+        if (!minimalCanvasMode()
+                && !exportDialogOpen
+                && !importDialogOpen
+                && !newFunctionNamingOpen
+                && !itemPickerOpen) {
             if (handleContextMenuClick(mouseX, mouseY, button)) return true;
             if (tryHandleNodeDockClick(mouseX, mouseY, button)) return true;
             if (button == 0 && categoryRailToggleContains(mouseX, mouseY)) {
@@ -4901,20 +5000,20 @@ public class WNodeScreen extends Screen {
             return handleItemPickerClick(mouseX, mouseY, button);
         }
         refreshEditorDiagnostics();
-        if (diagnosticsIndicatorContains(mouseX, mouseY)) {
+        if (!minimalCanvasMode() && diagnosticsIndicatorContains(mouseX, mouseY)) {
             if (button == 0) {
                 diagnosticsPanelOpen = !diagnosticsPanelOpen;
                 playUiClick(diagnosticsPanelOpen ? 1.02f : 0.96f);
             }
             return true;
         }
-        if (diagnosticsPanelContains(mouseX, mouseY)) {
+        if (!minimalCanvasMode() && diagnosticsPanelContains(mouseX, mouseY)) {
             return true;
         }
         if (diagnosticsPanelOpen && button == 0) {
             diagnosticsPanelOpen = false;
         }
-        if (handleNestedDiskToolbarClick(mouseX, mouseY, button)) {
+        if (!minimalCanvasMode() && handleNestedDiskToolbarClick(mouseX, mouseY, button)) {
             return true;
         }
         if (functionStore != null && button == 0 && schematicBtnContains(mouseX, mouseY)) {
@@ -4946,12 +5045,12 @@ public class WNodeScreen extends Screen {
             functionImportSubmenuOpen = false;
             playUiClick(0.98f);
         }
-        if (button == 0 && sectionsToggleContains(mouseX, mouseY)) {
+        if (!minimalCanvasMode() && button == 0 && sectionsToggleContains(mouseX, mouseY)) {
             showSectionsSidebar = !showSectionsSidebar;
             playUiClick(showSectionsSidebar ? 1.01f : 0.94f);
             return true;
         }
-        if (button == 0 && sectionsSidebarContains(mouseX, mouseY)) {
+        if (!minimalCanvasMode() && button == 0 && sectionsSidebarContains(mouseX, mouseY)) {
             int y = sectionsSidebarY() + 18;
             int row = ((int) mouseY - y) / 13;
             List<WGraph.WSection> sidebarSecs = sectionsSortedByLayer(graph.getSections());
@@ -5289,7 +5388,17 @@ public class WNodeScreen extends Screen {
             boolean click = !rightDragPanning && PointerGestureClassifier.isContextClick(
                     rightPressX, rightPressY, rightPressAtMs,
                     (int) mouseX, (int) mouseY, net.minecraft.Util.getMillis());
-            if (click && isCanvasPoint(rightPressX, rightPressY)) openContextMenuAt(rightPressX, rightPressY);
+            if (click && isCanvasPoint(rightPressX, rightPressY)) {
+                if (minimalCanvasMode()) {
+                    openNodeExplorer(
+                            rightPressX,
+                            rightPressY,
+                            screenToGraphX(rightPressX),
+                            screenToGraphY(rightPressY));
+                } else {
+                    openContextMenuAt(rightPressX, rightPressY);
+                }
+            }
             rightPressX = -1;
             rightPressY = -1;
             rightDragPanning = false;
@@ -5344,14 +5453,18 @@ public class WNodeScreen extends Screen {
                 pendingWireDragFrozen = true;
                 pendingWireFrozenTx = nx;
                 pendingWireFrozenTy = ny;
-                isSearching = true;
-                searchQuery = "";
-                menuFlyoutPath.clear();
-                clearStickyBrowseRoot();
-                menuAnchorNx = nx;
-                menuAnchorNy = ny;
-                menuX = (int) mouseX;
-                menuY = (int) mouseY;
+                if (minimalCanvasMode()) {
+                    openNodeExplorer((int) mouseX, (int) mouseY, nx, ny);
+                } else {
+                    isSearching = true;
+                    searchQuery = "";
+                    menuFlyoutPath.clear();
+                    clearStickyBrowseRoot();
+                    menuAnchorNx = nx;
+                    menuAnchorNy = ny;
+                    menuX = (int) mouseX;
+                    menuY = (int) mouseY;
+                }
             }
         }
         if (effectiveDetailLevel() == EditorDetailLevel.FULL
@@ -5989,14 +6102,22 @@ public class WNodeScreen extends Screen {
         if (keyCode == 86 && hasControlDown()) { pasteFromClipboard(); return true; }
         if (keyCode == 65 && Screen.hasShiftDown()) {
             clearPendingWireSpawn();
-            isSearching = true;
-            searchQuery = "";
-            menuFlyoutPath.clear();
-            clearStickyBrowseRoot();
-            menuAnchorNx = screenToGraphX(this.mouseX);
-            menuAnchorNy = screenToGraphY(this.mouseY);
-            menuX = this.mouseX;
-            menuY = this.mouseY;
+            if (minimalCanvasMode()) {
+                openNodeExplorer(
+                        this.mouseX,
+                        this.mouseY,
+                        screenToGraphX(this.mouseX),
+                        screenToGraphY(this.mouseY));
+            } else {
+                isSearching = true;
+                searchQuery = "";
+                menuFlyoutPath.clear();
+                clearStickyBrowseRoot();
+                menuAnchorNx = screenToGraphX(this.mouseX);
+                menuAnchorNy = screenToGraphY(this.mouseY);
+                menuX = this.mouseX;
+                menuY = this.mouseY;
+            }
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
@@ -6241,15 +6362,8 @@ public class WNodeScreen extends Screen {
             if (src.isDuplicationLocked()) {
                 continue;
             }
-            CompoundTag t = src.save().copy();
-            t.remove("id");
-            t.putInt("x", src.getX() + dx);
-            t.putInt("y", src.getY() + dy);
-            net.minecraft.resources.ResourceLocation type =
-                    net.minecraft.resources.ResourceLocation.parse(t.getString("typeId"));
-            WNode copy = NodeRegistry.createNode(type, t.getInt("x"), t.getInt("y"));
-            if (copy != null && !isEditorPeripheralLocked(type)) {
-                copy.load(t);
+            WNode copy = createDuplicateNode(src, src.getX() + dx, src.getY() + dy);
+            if (copy != null && !isEditorPeripheralLocked(copy.getTypeId())) {
                 graph.addNode(copy);
                 copy.setSelected(true);
                 last = copy;

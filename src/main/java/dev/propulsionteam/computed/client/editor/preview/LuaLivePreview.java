@@ -6,6 +6,7 @@ import dev.propulsionteam.computed.lua.runtime.LuaInvocationResult;
 import dev.propulsionteam.computed.lua.runtime.LuaNodeInstance;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import org.luaj.vm2.LuaValue;
 
@@ -34,6 +35,19 @@ public final class LuaLivePreview {
     public LuaInvocationResult run() {
         runtime.beginTick(++tick);
         return node.run(inputs, fields, tick, runtime.nextGraphStep(), true, null);
+    }
+
+    public LuaInvocationResult event(String eventName, LuaValue... arguments) {
+        runtime.beginTick(++tick);
+        return node.event(
+                eventName,
+                List.of(arguments),
+                inputs,
+                fields,
+                tick,
+                runtime.nextGraphStep(),
+                true,
+                null);
     }
 
     public NodeRenderLayout layout() {
