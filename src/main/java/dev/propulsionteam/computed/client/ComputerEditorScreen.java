@@ -71,7 +71,7 @@ public class ComputerEditorScreen extends WNodeScreen {
             ComputedProgramV3 program,
             WGraph editorGraph,
             long serverRevision) {
-        super(editorGraph, null, ignored -> false);
+        super(editorGraph);
         this.computerPos = computerPos;
         this.editorGraph = editorGraph;
         this.serverRevision = serverRevision;
@@ -359,7 +359,7 @@ public class ComputerEditorScreen extends WNodeScreen {
                     minecraft.player.getUUID(),
                     minecraft.level.dimension(),
                     computerPos,
-                    editorViewportContextKey(),
+                    EDITOR_VIEWPORT_ROOT,
                     editorPanX(),
                     editorPanY(),
                     editorZoom());

@@ -1,27 +1,10 @@
 {
-  "gui.computed.lod.zoom_in": "Zoom in to edit ports and controls",
   "itemGroup.computed": "Computed",
   "block.computed.computer": "Computer",
   "block.computed.creative_computer": "Creative Computer",
   "block.computed.monitor": "Monitor",
-  "item.computed.computer.stored": "Stored Program — %s nodes, %s functions",
-
+  "item.computed.computer.stored": "Stored Program - %s nodes, %s Lua definitions",
   "gui.computed.peripheral_not_available": "Not available",
-  "gui.computed.function_needs_peripheral": "Needs hardware",
-  "gui.computed.share.export_success": "Exported program string (%s chars) to clipboard",
-  "gui.computed.share.export_ready": "Export string ready (%s chars)",
-  "gui.computed.share.export_failed": "Failed to export program string",
-  "gui.computed.share.export_title": "Export Program To String",
-  "gui.computed.share.import_title": "Import Program From String",
-  "gui.computed.share.import_placeholder": "Paste your exported string here...",
-  "gui.computed.share.copy_button": "Copy",
-  "gui.computed.share.close_button": "Close",
-  "gui.computed.share.import_button": "Import",
-  "gui.computed.share.cancel_button": "Cancel",
-  "gui.computed.share.import_success": "Imported program. Embedded custom nodes: %s",
-  "gui.computed.share.import_success_legacy": "Imported legacy program string",
-  "gui.computed.share.import_failed": "Invalid or unsupported import string",
-
   "computed.configuration.title": "Computed Configs",
   "computed.configuration.section.computed.common.toml": "Computed Configs",
   "computed.configuration.section.computed.common.toml.title": "Computed Configs"
