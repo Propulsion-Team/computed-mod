@@ -1,0 +1,9 @@
+package net.neoforged.fml.loading;
+
+import net.neoforged.api.distmarker.Dist;
+
+public final class FMLEnvironment {
+    public static Dist dist = Dist.DEDICATED_SERVER;
+
+    private FMLEnvironment() {}
+}

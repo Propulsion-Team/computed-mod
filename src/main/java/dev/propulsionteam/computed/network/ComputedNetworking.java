@@ -1,8 +1,5 @@
 package dev.propulsionteam.computed.network;
 
-import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
-import dev.propulsionteam.computed.internal.node.api.WGraph;
-import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.ComputerEditorBridge;
 import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
@@ -10,7 +7,6 @@ import dev.propulsionteam.computed.customnodes.ComputedCustomNodes;
 import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
 import dev.propulsionteam.computed.content.monitors.widgets.SliderWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.Widget;
-import dev.propulsionteam.computed.content.nodes.widgets.InteractiveWidgetNode;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
@@ -176,26 +172,12 @@ public final class ComputedNetworking {
 
             for (Widget w : origin.getDrawList().widgets()) {
                 if (px < w.x() || px >= w.x() + w.w() || py < w.y() || py >= w.y() + w.h()) continue;
-                WNode node = findNodeById(computer.getGraph(), w.id());
-                if (!(node instanceof InteractiveWidgetNode interactive)) continue;
                 double value = 1.0;
                 if (w instanceof SliderWidget) {
                     value = w.w() <= 0 ? 0.0 : (double) (px - w.x()) / (double) w.w();
                 }
-                interactive.onWidgetInput(value);
-                return;
+                if (computer.handleWidgetInput(w.id(), value)) return;
             }
         });
-    }
-
-    private static WNode findNodeById(WGraph g, UUID id) {
-        for (WNode n : g.getNodes()) {
-            if (n.getId().equals(id)) return n;
-            if (n instanceof FunctionCardNode fc) {
-                WNode hit = findNodeById(fc.getInnerGraph(), id);
-                if (hit != null) return hit;
-            }
-        }
-        return null;
     }
 }

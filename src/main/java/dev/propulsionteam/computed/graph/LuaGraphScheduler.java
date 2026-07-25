@@ -135,6 +135,12 @@ public final class LuaGraphScheduler {
         return analysis;
     }
 
+    public List<ComputedDiagnostic> validationDiagnostics() {
+        List<ComputedDiagnostic> diagnostics = new ArrayList<>(definitionDiagnostics);
+        diagnostics.addAll(analysis.diagnostics());
+        return List.copyOf(diagnostics);
+    }
+
     public void unload() {
         runtime.unload();
     }
