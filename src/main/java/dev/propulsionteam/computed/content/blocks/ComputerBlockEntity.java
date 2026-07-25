@@ -3,10 +3,20 @@ package dev.propulsionteam.computed.content.blocks;
 import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.ComputedRegistries;
 import dev.propulsionteam.computed.content.Peripherals;
+import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
+import dev.propulsionteam.computed.content.monitors.widgets.ButtonWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.ClockWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.ProgressBarWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.SliderWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.TextAlignment;
+import dev.propulsionteam.computed.content.monitors.widgets.TextWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.Widget;
+import dev.propulsionteam.computed.content.monitors.widgets.WidgetDrawList;
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
 import dev.propulsionteam.computed.graph.GraphNode;
 import dev.propulsionteam.computed.graph.LuaGraphScheduler;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
+import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
 import dev.propulsionteam.computed.persistence.ProgramV3Codec;
 import java.io.ByteArrayOutputStream;
@@ -53,6 +63,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     private UUID computerUuid;
     private long programRevision;
     private transient boolean dropsHandled;
+    private final int[] emittedRedstone = new int[Direction.values().length];
 
     public ComputerBlockEntity(BlockPos pos, BlockState state) {
         super(ComputedRegistries.COMPUTER_BLOCK_ENTITY.get(), pos, state);
@@ -74,7 +85,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     }
 
     public int getEmittedRedstone(Direction fromNeighborTowardSelf) {
-        return 0;
+        return emittedRedstone[fromNeighborTowardSelf.getOpposite().ordinal()];
     }
 
     @Override
@@ -125,7 +136,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     }
 
     public boolean handleWidgetInput(UUID nodeId, double value) {
-        return false;
+        return ensureScheduler().eventNode(
+                nodeId,
+                "input",
+                org.luaj.vm2.LuaValue.valueOf(value));
     }
 
     public record ApplyGraphResult(boolean accepted, long serverRevision, String message) {
@@ -338,6 +352,88 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     }
 
     @Override
+    public double[] position() {
+        Vec3 position = Vec3.atCenterOf(worldPosition);
+        return new double[] {position.x, position.y, position.z};
+    }
+
+    @Override
+    public double[] rotation() {
+        Direction facing = getBlockState().hasProperty(ComputerBlock.FACING)
+                ? getBlockState().getValue(ComputerBlock.FACING)
+                : Direction.NORTH;
+        return new double[] {facing.toYRot(), 0, 0};
+    }
+
+    @Override
+    public int redstoneInput(String face) {
+        Direction worldFace = worldFace(face);
+        if (worldFace == null || level == null || level.isClientSide) {
+            return 0;
+        }
+        BlockPos neighbor = worldPosition.relative(worldFace);
+        return level.getSignal(neighbor, worldFace);
+    }
+
+    @Override
+    public int comparatorInput(String face) {
+        Direction worldFace = worldFace(face);
+        if (worldFace == null || level == null || level.isClientSide) {
+            return 0;
+        }
+        BlockPos neighbor = worldPosition.relative(worldFace);
+        BlockState target = level.getBlockState(neighbor);
+        return target.hasAnalogOutputSignal()
+                ? target.getAnalogOutputSignal(level, neighbor)
+                : level.getSignal(neighbor, worldFace);
+    }
+
+    @Override
+    public boolean blockPresent(String face) {
+        Direction worldFace = worldFace(face);
+        return worldFace != null
+                && level != null
+                && !level.isClientSide
+                && !level.getBlockState(worldPosition.relative(worldFace)).isAir();
+    }
+
+    @Override
+    public void redstoneOutput(String face, int power) {
+        Direction worldFace = worldFace(face);
+        if (worldFace == null || level == null || level.isClientSide) {
+            return;
+        }
+        int clamped = net.minecraft.util.Mth.clamp(power, 0, 15);
+        if (emittedRedstone[worldFace.ordinal()] == clamped) {
+            return;
+        }
+        emittedRedstone[worldFace.ordinal()] = clamped;
+        level.updateNeighborsAt(worldPosition, getBlockState().getBlock());
+    }
+
+    @Override
+    public void showWidgets(String target, List<BuiltinWidget> definitions) {
+        Direction direction = worldFace(target);
+        if (direction == null || level == null || level.isClientSide) {
+            return;
+        }
+        if (!(level.getBlockEntity(worldPosition.relative(direction))
+                instanceof MonitorBlockEntity monitor)) {
+            return;
+        }
+        MonitorBlockEntity origin = monitor.findOrigin();
+        if (origin == null) {
+            return;
+        }
+        List<Widget> widgets = definitions.stream()
+                .map(ComputerBlockEntity::toWidget)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        origin.bindOwner(worldPosition);
+        origin.setDrawList(new WidgetDrawList(widgets));
+    }
+
+    @Override
     public void runCommand(String commandText) {
         if (commandText == null
                 || commandText.isBlank()
@@ -446,6 +542,100 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     private static UUID stableGraphId(BlockPos pos) {
         return UUID.nameUUIDFromBytes(
                 ("computed:graph:" + pos.toShortString()).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private Direction worldFace(String name) {
+        if (name == null) {
+            return null;
+        }
+        Direction facing = getBlockState().hasProperty(ComputerBlock.FACING)
+                ? getBlockState().getValue(ComputerBlock.FACING)
+                : Direction.NORTH;
+        return switch (name.strip().toLowerCase(java.util.Locale.ROOT)) {
+            case "front" -> facing;
+            case "back" -> facing.getOpposite();
+            case "left" -> facing.getCounterClockWise();
+            case "right" -> facing.getClockWise();
+            case "top", "up" -> Direction.UP;
+            case "bottom", "down" -> Direction.DOWN;
+            default -> null;
+        };
+    }
+
+    private static Widget toWidget(BuiltinWidget widget) {
+        Map<String, Object> properties = widget.properties();
+        return switch (widget.type()) {
+            case "text" -> new TextWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    text(properties, "text"),
+                    widget.color(),
+                    alignment(properties));
+            case "clock" -> new ClockWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    widget.color(),
+                    flag(properties, "show_seconds"),
+                    alignment(properties));
+            case "button" -> new ButtonWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    text(properties, "label"),
+                    widget.color());
+            case "slider" -> new SliderWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    number(properties, "value"),
+                    number(properties, "minimum"),
+                    number(properties, "maximum"),
+                    widget.color(),
+                    number(properties, "step"));
+            case "progress" -> new ProgressBarWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    number(properties, "value"),
+                    number(properties, "maximum"),
+                    widget.color(),
+                    (int) number(properties, "segments"));
+            default -> null;
+        };
+    }
+
+    private static String text(Map<String, Object> properties, String key) {
+        Object value = properties.get(key);
+        return value instanceof String text ? text : "";
+    }
+
+    private static double number(Map<String, Object> properties, String key) {
+        Object value = properties.get(key);
+        return value instanceof Number number ? number.doubleValue() : 0;
+    }
+
+    private static boolean flag(Map<String, Object> properties, String key) {
+        return Boolean.TRUE.equals(properties.get(key));
+    }
+
+    private static TextAlignment alignment(Map<String, Object> properties) {
+        return switch (text(properties, "alignment").toLowerCase(java.util.Locale.ROOT)) {
+            case "right" -> TextAlignment.RIGHT;
+            case "center" -> TextAlignment.CENTER;
+            default -> TextAlignment.LEFT;
+        };
     }
 
     @Nullable

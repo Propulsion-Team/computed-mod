@@ -100,7 +100,7 @@ public final class LuaGraphScheduler {
                     tick,
                     runtime.nextGraphStep(),
                     preview,
-                    (name, values) -> events.addLast(new GraphEvent(name, values)));
+                    (name, values) -> events.addLast(new GraphEvent(null, name, values)));
             outputs.put(nodeId, result.outputs());
             diagnostics.addAll(result.diagnostics());
             lastInputs.put(nodeId, copy(inputs));
@@ -115,7 +115,16 @@ public final class LuaGraphScheduler {
     }
 
     public void emit(String eventName, LuaValue... arguments) {
-        events.addLast(new GraphEvent(eventName, List.of(arguments)));
+        events.addLast(new GraphEvent(null, eventName, List.of(arguments)));
+    }
+
+    public boolean eventNode(UUID nodeId, String eventName, LuaValue... arguments) {
+        LuaNodeInstance instance = instances.get(nodeId);
+        if (instance == null || !instance.definition().eventHandlers().containsKey(eventName)) {
+            return false;
+        }
+        events.addLast(new GraphEvent(nodeId, eventName, List.of(arguments)));
+        return true;
     }
 
     public ComputedProgramV3 snapshot(long revision) {
@@ -268,6 +277,7 @@ public final class LuaGraphScheduler {
                 GraphNode node = nodes.get(nodeId);
                 if (instance == null
                         || node == null
+                        || (event.targetNode() != null && !event.targetNode().equals(nodeId))
                         || !instance.definition().eventHandlers().containsKey(event.name())
                         || instance.status() == LuaNodeStatus.YIELDED) {
                     continue;
@@ -280,7 +290,7 @@ public final class LuaGraphScheduler {
                         tick,
                         runtime.nextGraphStep(),
                         preview,
-                        (name, values) -> events.addLast(new GraphEvent(name, values)));
+                        (name, values) -> events.addLast(new GraphEvent(null, name, values)));
                 outputs.put(nodeId, result.outputs());
                 diagnostics.addAll(result.diagnostics());
             }
@@ -344,7 +354,7 @@ public final class LuaGraphScheduler {
                 null);
     }
 
-    private record GraphEvent(String name, List<LuaValue> arguments) {
+    private record GraphEvent(UUID targetNode, String name, List<LuaValue> arguments) {
         private GraphEvent {
             if (name == null || name.isBlank()) {
                 throw new IllegalArgumentException("Event name is required");
