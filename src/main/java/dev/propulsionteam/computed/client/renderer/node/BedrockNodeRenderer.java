@@ -53,7 +53,9 @@ public final class BedrockNodeRenderer {
                 node.getTitle(),
                 x + 6,
                 y + 4,
-                ComputedEditorTheme.TEXT_HEADER,
+                node.isSelected() && !diagnosticError && !diagnosticWarning
+                        ? 0xFF101418
+                        : ComputedEditorTheme.TEXT_HEADER,
                 false);
         for (int index = 0; index < node.getInputs().size(); index++) {
             renderPin(

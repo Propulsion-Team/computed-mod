@@ -4,6 +4,7 @@ import dev.propulsionteam.computed.graph.GraphNode;
 import dev.propulsionteam.computed.graph.PortDirection;
 import dev.propulsionteam.computed.graph.PortSnapshot;
 import dev.propulsionteam.computed.client.renderer.node.BedrockNodeRenderer;
+import dev.propulsionteam.computed.client.renderer.node.NodePalette;
 import dev.propulsionteam.computed.client.renderer.node.NodeRenderLayout;
 import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.internal.node.api.WPin;
@@ -108,6 +109,7 @@ public final class LuaEditorNode extends WNode {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         BedrockNodeRenderer.render(graphics, this, category, false, false, mouseX, mouseY);
+        int accent = NodePalette.category(category).frameArgb();
         int fieldsY = getY() + fieldsTop();
         for (int index = 0; index < fieldControls.size(); index++) {
             fieldControls.get(index).render(
@@ -116,7 +118,8 @@ public final class LuaEditorNode extends WNode {
                     fieldsY + index * LuaNodeFieldControl.ROW_HEIGHT,
                     getWidth(),
                     mouseX,
-                    mouseY);
+                    mouseY,
+                    accent);
         }
     }
 

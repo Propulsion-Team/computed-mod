@@ -49,7 +49,8 @@ final class LuaNodeFieldControl {
             int rowY,
             int nodeWidth,
             int mouseX,
-            int mouseY) {
+            int mouseY,
+            int accent) {
         var font = Minecraft.getInstance().font;
         int controlX = nodeX + nodeWidth - CONTROL_WIDTH - 9;
         int controlY = rowY + 2;
@@ -66,18 +67,24 @@ final class LuaNodeFieldControl {
                 && mouseY >= controlY
                 && mouseY < controlY + controlHeight;
         if (schema.type() == FieldType.BOOLEAN) {
-            renderBoolean(graphics, controlX, controlY, hovered);
+            renderBoolean(graphics, controlX, controlY, hovered, accent);
         } else if (schema.type() == FieldType.NUMBER
                 && schema.control() == FieldControl.SLIDER) {
-            renderSlider(graphics, controlX, controlY, hovered);
+            renderSlider(graphics, controlX, controlY, hovered, accent);
         } else if (schema.type() == FieldType.CHOICE
                 || schema.type() == FieldType.DIRECTION) {
-            renderDropdown(graphics, controlX, controlY, hovered);
+            renderDropdown(graphics, controlX, controlY, hovered, accent);
         } else {
-            renderValueBox(graphics, controlX, controlY, hovered);
+            renderValueBox(graphics, controlX, controlY, hovered, accent);
         }
         if (expanded) {
-            renderDropdownOverlay(graphics, controlX, controlY + controlHeight);
+            renderDropdownOverlay(
+                    graphics,
+                    controlX,
+                    controlY + controlHeight,
+                    mouseX,
+                    mouseY,
+                    accent);
         }
     }
 
@@ -226,12 +233,14 @@ final class LuaNodeFieldControl {
         return expanded ? rowY + 16 + options().size() * 14 : rowY + ROW_HEIGHT;
     }
 
-    private void renderBoolean(GuiGraphics graphics, int x, int y, boolean hovered) {
-        ComputedEditorStyle.drawField(graphics, x, y, CONTROL_WIDTH, 14, focused, hovered);
+    private void renderBoolean(
+            GuiGraphics graphics, int x, int y, boolean hovered, int accent) {
+        ComputedEditorStyle.drawField(
+                graphics, x, y, CONTROL_WIDTH, 14, focused, hovered, accent);
         int boxX = x + CONTROL_WIDTH - 13;
         graphics.renderOutline(boxX, y + 2, 10, 10, ComputedEditorTheme.BORDER_DEFAULT);
         if (value.toboolean()) {
-            graphics.fill(boxX + 2, y + 4, boxX + 8, y + 10, ComputedEditorTheme.ACCENT);
+            graphics.fill(boxX + 2, y + 4, boxX + 8, y + 10, accent);
         }
         graphics.drawString(
                 Minecraft.getInstance().font,
@@ -242,8 +251,10 @@ final class LuaNodeFieldControl {
                 false);
     }
 
-    private void renderSlider(GuiGraphics graphics, int x, int y, boolean hovered) {
-        ComputedEditorStyle.drawField(graphics, x, y, CONTROL_WIDTH, 14, dragging, hovered);
+    private void renderSlider(
+            GuiGraphics graphics, int x, int y, boolean hovered, int accent) {
+        ComputedEditorStyle.drawField(
+                graphics, x, y, CONTROL_WIDTH, 14, dragging, hovered, accent);
         double minimum = schema.minimum();
         double maximum = schema.maximum();
         double ratio = (value.todouble() - minimum) / (maximum - minimum);
@@ -251,7 +262,7 @@ final class LuaNodeFieldControl {
         int trackWidth = CONTROL_WIDTH - 8;
         graphics.fill(trackX, y + 9, trackX + trackWidth, y + 11, ComputedEditorTheme.BORDER_SUBTLE);
         int knob = trackX + (int) Math.round(ratio * trackWidth);
-        graphics.fill(knob - 2, y + 7, knob + 2, y + 13, ComputedEditorTheme.ACCENT);
+        graphics.fill(knob - 2, y + 7, knob + 2, y + 13, accent);
         graphics.drawString(
                 Minecraft.getInstance().font,
                 formatNumber(value.todouble()),
@@ -261,8 +272,10 @@ final class LuaNodeFieldControl {
                 false);
     }
 
-    private void renderDropdown(GuiGraphics graphics, int x, int y, boolean hovered) {
-        ComputedEditorStyle.drawField(graphics, x, y, CONTROL_WIDTH, 14, expanded, hovered);
+    private void renderDropdown(
+            GuiGraphics graphics, int x, int y, boolean hovered, int accent) {
+        ComputedEditorStyle.drawField(
+                graphics, x, y, CONTROL_WIDTH, 14, expanded, hovered, accent);
         graphics.drawString(
                 Minecraft.getInstance().font,
                 value.tojstring(),
@@ -279,8 +292,10 @@ final class LuaNodeFieldControl {
                 false);
     }
 
-    private void renderValueBox(GuiGraphics graphics, int x, int y, boolean hovered) {
-        ComputedEditorStyle.drawField(graphics, x, y, CONTROL_WIDTH, 14, focused, hovered);
+    private void renderValueBox(
+            GuiGraphics graphics, int x, int y, boolean hovered, int accent) {
+        ComputedEditorStyle.drawField(
+                graphics, x, y, CONTROL_WIDTH, 14, focused, hovered, accent);
         if (schema.type() == FieldType.COLOR) {
             graphics.fill(x + 2, y + 2, x + 13, y + 12, (int) (long) value.todouble());
         }
@@ -298,7 +313,13 @@ final class LuaNodeFieldControl {
                 false);
     }
 
-    private void renderDropdownOverlay(GuiGraphics graphics, int x, int y) {
+    private void renderDropdownOverlay(
+            GuiGraphics graphics,
+            int x,
+            int y,
+            int mouseX,
+            int mouseY,
+            int accent) {
         List<String> options = options();
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 4500);
@@ -313,13 +334,26 @@ final class LuaNodeFieldControl {
                 y,
                 CONTROL_WIDTH,
                 options.size() * 14,
-                ComputedEditorTheme.BORDER_MENU);
+                accent);
         for (int index = 0; index < options.size(); index++) {
+            int rowY = y + index * 14;
+            boolean hovered = mouseX >= x
+                    && mouseX < x + CONTROL_WIDTH
+                    && mouseY >= rowY
+                    && mouseY < rowY + 14;
+            if (hovered) {
+                graphics.fill(
+                        x + 1,
+                        rowY,
+                        x + CONTROL_WIDTH - 1,
+                        rowY + 14,
+                        0x66000000 | (accent & 0x00FFFFFF));
+            }
             graphics.drawString(
                     Minecraft.getInstance().font,
                     options.get(index),
                     x + 4,
-                    y + index * 14 + 3,
+                    rowY + 3,
                     ComputedEditorTheme.TEXT_PRIMARY,
                     false);
         }

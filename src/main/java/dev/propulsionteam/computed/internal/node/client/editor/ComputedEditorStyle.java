@@ -54,6 +54,26 @@ public final class ComputedEditorStyle {
 
     public static void drawField(
             GuiGraphics graphics, int x, int y, int width, int height, boolean focused, boolean hovered) {
+        drawField(
+                graphics,
+                x,
+                y,
+                width,
+                height,
+                focused,
+                hovered,
+                ComputedEditorTheme.ACCENT);
+    }
+
+    public static void drawField(
+            GuiGraphics graphics,
+            int x,
+            int y,
+            int width,
+            int height,
+            boolean focused,
+            boolean hovered,
+            int accent) {
         graphics.fill(
                 x,
                 y,
@@ -67,7 +87,7 @@ public final class ComputedEditorStyle {
                 width,
                 height,
                 focused
-                        ? ComputedEditorTheme.ACCENT
+                        ? accent
                         : hovered ? ComputedEditorTheme.BORDER_HIGHLIGHT : ComputedEditorTheme.BORDER_DEFAULT);
     }
 
