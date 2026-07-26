@@ -48,8 +48,6 @@ public final class BedrockNodeRenderer {
                 y + height - 2,
                 hovered ? 0xFF20252A : 0xFF171B1F);
         graphics.fill(x + 3, y + 3, x + width - 3, y + 15, frame);
-        graphics.fill(x + 4, y + 4, x + width - 4, y + 14, 0xCC101418);
-        graphics.fill(x + 5, y + 17, x + width - 5, y + height - 5, 0xFF0E1114);
         graphics.drawString(
                 Minecraft.getInstance().font,
                 node.getTitle(),
