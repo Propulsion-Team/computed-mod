@@ -272,7 +272,12 @@ public class WNodeScreen extends Screen {
         drawGrid(graphics);
         int graphMouseX = screenToGraphX(mouseX);
         int graphMouseY = screenToGraphY(mouseY);
-        if (draggingConnection < 0 && linkingNode == null && !panning) {
+        boolean mouseInsideCanvas =
+                mouseX >= 0 && mouseX < width && mouseY >= 0 && mouseY < height;
+        if (mouseInsideCanvas
+                && draggingConnection < 0
+                && linkingNode == null
+                && !panning) {
             updateWireHover(graphMouseX, graphMouseY);
         } else {
             wires.clearHover();
