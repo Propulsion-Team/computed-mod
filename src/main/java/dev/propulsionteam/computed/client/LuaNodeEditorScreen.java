@@ -3,6 +3,7 @@ package dev.propulsionteam.computed.client;
 import dev.propulsionteam.computed.client.editor.canvas.LuaEditorGraphAdapter;
 import dev.propulsionteam.computed.client.editor.canvas.LuaEditorNode;
 import dev.propulsionteam.computed.client.editor.lua.LuaEditorSession;
+import dev.propulsionteam.computed.client.editor.lua.LuaSyntaxHighlighter;
 import dev.propulsionteam.computed.client.editor.preview.LuaLivePreview;
 import dev.propulsionteam.computed.graph.ComputedGraph;
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
@@ -58,6 +59,8 @@ public final class LuaNodeEditorScreen extends Screen {
     private String source;
     private int cursor;
     private int firstLine;
+    private int horizontalScroll;
+    private List<List<LuaSyntaxHighlighter.Span>> highlightedLines;
     private boolean sourceFocused = true;
     private boolean completionOpen;
     private int completionIndex;
@@ -90,6 +93,7 @@ public final class LuaNodeEditorScreen extends Screen {
         this.placementY = placementY;
         this.source = source == null ? "" : source;
         cursor = this.source.length();
+        highlightedLines = LuaSyntaxHighlighter.highlight(this.source);
         BuiltinEndpoints.register();
         session.sourceChanged(this.source, net.minecraft.Util.getMillis() - LuaEditorSession.DEBOUNCE_MILLIS);
         updateCompilation(net.minecraft.Util.getMillis());
@@ -98,6 +102,11 @@ public final class LuaNodeEditorScreen extends Screen {
     @Override
     public void tick() {
         updateCompilation(net.minecraft.Util.getMillis());
+    }
+
+    @Override
+    protected void init() {
+        centerPreviewNode();
     }
 
     @Override
@@ -156,11 +165,15 @@ public final class LuaNodeEditorScreen extends Screen {
             apply();
             return true;
         }
-        if (contains(mouseX, mouseY, 0, 26, divider, height - 26)) {
+        if (contains(mouseX, mouseY, 0, 26, divider, Math.max(0, height - 41))) {
             sourceFocused = true;
             completionOpen = false;
             int line = firstLine + Math.max(0, ((int) mouseY - 31) / 11);
-            cursor = offsetAtLine(line, Math.max(0, ((int) mouseX - 43) / 6));
+            String[] lines = source.split("\n", -1);
+            int clampedLine = Mth.clamp(line, 0, Math.max(0, lines.length - 1));
+            cursor = offsetAtLine(
+                    clampedLine,
+                    columnAtPixel(lines[clampedLine], (int) mouseX - 42 + horizontalScroll));
             return true;
         }
         sourceFocused = false;
@@ -175,6 +188,14 @@ public final class LuaNodeEditorScreen extends Screen {
             double scrollY) {
         int divider = Math.max(300, width * 3 / 5);
         if (mouseX < divider) {
+            if (hasShiftDown() || scrollX != 0) {
+                double amount = scrollX != 0 ? scrollX : scrollY;
+                horizontalScroll = Mth.clamp(
+                        horizontalScroll - (int) Math.signum(amount) * 24,
+                        0,
+                        maximumHorizontalScroll(divider));
+                return true;
+            }
             int lines = source.split("\n", -1).length;
             int visible = Math.max(1, (height - 62) / 11);
             firstLine = Mth.clamp(
@@ -315,6 +336,7 @@ public final class LuaNodeEditorScreen extends Screen {
         int visible = Math.max(1, (height - 62) / 11);
         int cursorLine = lineOf(cursor);
         int cursorColumn = cursor - lineStart(cursor);
+        ensureCursorVisible(divider, lines, cursorLine, cursorColumn);
         for (int lineIndex = firstLine;
                 lineIndex < Math.min(lines.length, firstLine + visible);
                 lineIndex++) {
@@ -328,15 +350,31 @@ public final class LuaNodeEditorScreen extends Screen {
                             ? ComputedEditorTheme.ACCENT
                             : ComputedEditorTheme.TEXT_TERTIARY,
                     false);
+        }
+        graphics.enableScissor(37, 26, divider, height - 15);
+        for (int lineIndex = firstLine;
+                lineIndex < Math.min(lines.length, firstLine + visible);
+                lineIndex++) {
+            int y = 31 + (lineIndex - firstLine) * 11;
             String line = lines[lineIndex];
-            graphics.drawString(font, line, 42, y, syntaxColor(line), false);
+            int x = 42 - horizontalScroll;
+            List<LuaSyntaxHighlighter.Span> spans = lineIndex < highlightedLines.size()
+                    ? highlightedLines.get(lineIndex)
+                    : List.of(new LuaSyntaxHighlighter.Span(line, LuaSyntaxHighlighter.DEFAULT));
+            for (LuaSyntaxHighlighter.Span span : spans) {
+                graphics.drawString(font, span.text(), x, y, span.color(), false);
+                x += font.width(span.text());
+            }
             if (sourceFocused
                     && lineIndex == cursorLine
                     && (System.currentTimeMillis() / 500) % 2 == 0) {
-                int x = 42 + font.width(line.substring(0, Math.min(cursorColumn, line.length())));
-                graphics.vLine(x, y - 1, y + 9, ComputedEditorTheme.TEXT_HEADER);
+                int cursorX = 42
+                        - horizontalScroll
+                        + font.width(line.substring(0, Math.min(cursorColumn, line.length())));
+                graphics.vLine(cursorX, y - 1, y + 9, ComputedEditorTheme.TEXT_HEADER);
             }
         }
+        graphics.disableScissor();
         graphics.vLine(36, 26, height - 1, ComputedEditorTheme.BORDER_SUBTLE);
         String help = signatureHelp();
         if (!help.isEmpty()) {
@@ -368,7 +406,13 @@ public final class LuaNodeEditorScreen extends Screen {
                 previewHeight,
                 ComputedEditorTheme.BORDER_DEFAULT);
         if (previewNode != null) {
+            graphics.enableScissor(
+                    previewX + 1,
+                    previewY + 1,
+                    previewX + previewWidth - 1,
+                    previewY + previewHeight - 1);
             previewNode.render(graphics, mouseX, mouseY, partialTick);
+            graphics.disableScissor();
         }
         if (session.snapshot().stalePreview()) {
             graphics.fill(
@@ -496,8 +540,9 @@ public final class LuaNodeEditorScreen extends Screen {
             previewNode = LuaEditorGraphAdapter.createEditorNode(
                     previewProgram,
                     definition.id(),
-                    Math.max(width * 3 / 5 + 34, 334),
-                    62);
+                    0,
+                    0);
+            centerPreviewNode();
             status = "Preview updated";
             replacementConfirmation = false;
         } catch (RuntimeException exception) {
@@ -646,7 +691,66 @@ public final class LuaNodeEditorScreen extends Screen {
     private void changed() {
         replacementConfirmation = false;
         completionOpen = false;
+        highlightedLines = LuaSyntaxHighlighter.highlight(source);
         session.sourceChanged(source, net.minecraft.Util.getMillis());
+    }
+
+    private void centerPreviewNode() {
+        if (previewNode == null || width <= 0 || height <= 0) {
+            return;
+        }
+        int divider = Math.max(300, width * 3 / 5);
+        int previewX = divider + 12;
+        int previewY = 38;
+        int previewWidth = width - divider - 24;
+        int previewHeight = Math.max(80, height / 2 - 42);
+        previewNode.ensureLayoutUpToDate();
+        previewNode.setPos(
+                previewX + (previewWidth - previewNode.getWidth()) / 2,
+                previewY + (previewHeight - previewNode.getHeight()) / 2);
+    }
+
+    private void ensureCursorVisible(
+            int divider,
+            String[] lines,
+            int cursorLine,
+            int cursorColumn) {
+        if (cursorLine < 0 || cursorLine >= lines.length) {
+            return;
+        }
+        String line = lines[cursorLine];
+        int prefixWidth =
+                font.width(line.substring(0, Math.min(cursorColumn, line.length())));
+        int viewportWidth = Math.max(1, divider - 50);
+        if (prefixWidth - horizontalScroll < 0) {
+            horizontalScroll = prefixWidth;
+        } else if (prefixWidth - horizontalScroll > viewportWidth) {
+            horizontalScroll = prefixWidth - viewportWidth;
+        }
+        horizontalScroll = Mth.clamp(horizontalScroll, 0, maximumHorizontalScroll(divider));
+    }
+
+    private int maximumHorizontalScroll(int divider) {
+        int widest = 0;
+        for (String line : source.split("\n", -1)) {
+            widest = Math.max(widest, font.width(line));
+        }
+        return Math.max(0, widest - Math.max(1, divider - 50));
+    }
+
+    private int columnAtPixel(String line, int targetPixel) {
+        if (targetPixel <= 0) {
+            return 0;
+        }
+        int width = 0;
+        for (int index = 0; index < line.length(); index++) {
+            int characterWidth = font.width(line.substring(index, index + 1));
+            if (targetPixel < width + characterWidth / 2) {
+                return index;
+            }
+            width += characterWidth;
+        }
+        return line.length();
     }
 
     private void moveVertical(int direction) {
@@ -721,23 +825,6 @@ public final class LuaNodeEditorScreen extends Screen {
             return "ctx:output(id, value)";
         }
         return "";
-    }
-
-    private static int syntaxColor(String line) {
-        String trimmed = line.stripLeading();
-        if (trimmed.startsWith("--")) {
-            return 0xFF6E8B74;
-        }
-        if (trimmed.startsWith("local")
-                || trimmed.startsWith("return")
-                || trimmed.startsWith("function")
-                || trimmed.startsWith("end")) {
-            return 0xFF72B7E8;
-        }
-        if (line.contains("\"") || line.contains("'")) {
-            return 0xFFD7B56D;
-        }
-        return ComputedEditorTheme.TEXT_PRIMARY;
     }
 
     private static LuaValue nextValue(LuaValue value) {
