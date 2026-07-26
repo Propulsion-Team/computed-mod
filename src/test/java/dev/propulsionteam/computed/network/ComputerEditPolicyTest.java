@@ -6,11 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.propulsionteam.computed.graph.ComputedGraph;
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
 import dev.propulsionteam.computed.graph.GraphNode;
+import dev.propulsionteam.computed.graph.PortDirection;
+import dev.propulsionteam.computed.graph.PortSnapshot;
+import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
+import dev.propulsionteam.computed.lua.node.ConnectionType;
+import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.luaj.vm2.LuaValue;
 
 class ComputerEditPolicyTest {
     @Test
@@ -54,5 +60,45 @@ class ComputerEditPolicyTest {
                 null);
 
         assertTrue(ComputerEditPolicy.programShape(program).contains("node limit"));
+    }
+
+    @Test
+    void rejectsWrongFieldTypesAndUndeclaredFields() {
+        var definition = BundledLuaLibrary.load().get("computed:constant");
+        GraphNode wrongType = new GraphNode(
+                UUID.randomUUID(),
+                definition.id(),
+                definition.hash(),
+                0,
+                0,
+                List.of(new PortSnapshot(
+                        "value",
+                        PortDirection.OUTPUT,
+                        ConnectionType.NUMBER,
+                        "value")),
+                Map.of("value", new LuaStateCodec().encode(LuaValue.valueOf("not a number"))));
+        ComputedProgramV3 wrongTypeProgram = new ComputedProgramV3(
+                0,
+                new ComputedGraph(UUID.randomUUID(), List.of(wrongType), List.of()),
+                Map.of(),
+                Map.of(),
+                null);
+        GraphNode extraField = new GraphNode(
+                wrongType.id(),
+                definition.id(),
+                definition.hash(),
+                0,
+                0,
+                wrongType.ports(),
+                Map.of("unknown", new LuaStateCodec().encode(LuaValue.ZERO)));
+        ComputedProgramV3 extraFieldProgram = new ComputedProgramV3(
+                0,
+                new ComputedGraph(UUID.randomUUID(), List.of(extraField), List.of()),
+                Map.of(),
+                Map.of(),
+                null);
+
+        assertTrue(ComputerEditPolicy.programShape(wrongTypeProgram).contains("invalid"));
+        assertTrue(ComputerEditPolicy.programShape(extraFieldProgram).contains("undeclared"));
     }
 }

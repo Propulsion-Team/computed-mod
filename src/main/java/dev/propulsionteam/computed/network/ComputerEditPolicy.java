@@ -11,7 +11,9 @@ import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
 import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
 import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 public final class ComputerEditPolicy {
     public static final double MAX_DISTANCE_SQ = 16.0 * 16.0;
@@ -65,16 +67,20 @@ public final class ComputerEditPolicy {
         sources.putAll(IntegrationLuaLibrary.load());
         sources.putAll(candidate.library());
         Map<String, LuaNodeDefinition> definitions = new LinkedHashMap<>();
+        Set<String> attemptedDefinitions = new LinkedHashSet<>();
         LuaSourceCompiler compiler = new LuaSourceCompiler();
         LuaDefinitionLoader loader = new LuaDefinitionLoader();
         LuaSandbox sandbox = new LuaSandbox();
-        for (Map.Entry<String, LuaDefinitionSource> entry : sources.entrySet()) {
+        for (var node : candidate.rootGraph().nodes()) {
+            String definitionId = node.definitionId();
+            LuaDefinitionSource source = sources.get(definitionId);
+            if (source == null || !attemptedDefinitions.add(definitionId)) {
+                continue;
+            }
             try {
                 definitions.put(
-                        entry.getKey(),
-                        loader.load(
-                                compiler.compile(entry.getValue().apiVersion(), entry.getValue().source()),
-                                sandbox));
+                        definitionId,
+                        loader.load(compiler.compile(source.apiVersion(), source.source()), sandbox));
             } catch (RuntimeException ignored) {
             }
         }

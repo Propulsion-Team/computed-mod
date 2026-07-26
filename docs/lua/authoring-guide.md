@@ -9,7 +9,14 @@ node:category("state")
 node:style("standard")
 node:input("increment", "number")
 node:output("count", "number")
-node:field("step", "number", { default = 1 })
+node:field("step", "number", {
+    default = 1,
+    min = 0,
+    max = 10,
+    control = "slider",
+    step = 0.5,
+    label = "Step Size"
+})
 node:state("count", 0)
 
 node:on_run(function(ctx)
@@ -26,5 +33,32 @@ Definition IDs are stable, lowercase, namespaced identifiers. Port, field, state
 Choose `input` execution for dataflow nodes, `tick` for world sensors, `step` for explicitly stepped nodes, and `event` when only named handlers should run. A failed invocation discards all staged output and state changes. The next eligible execution retries the callback.
 
 Use endpoints for Minecraft or addon access. Lua values never contain Java or Minecraft objects.
+
+## Create a node in a computer
+
+Open the Node Explorer, expand **User Nodes**, and choose **New Lua Node…**. The editor starts with a unique reusable `user:node_<id>` definition. Edit and preview the source, then choose **Apply**. Computed adds the validated definition to that computer's embedded library and places its first instance at the canvas anchor. Additional instances appear under **User Nodes** and can be placed like bundled nodes.
+
+Right-click an existing definition in the explorer to edit it. Replacing a definition with the same ID requires confirmation when its source hash changes.
+
+## Field controls
+
+Field values belong to each node instance and participate in autosave, undo, duplication, and server validation. Use value controls for unrestricted numbers and explicit sliders for bounded values:
+
+```lua
+node:field("name", "text", { default = "Display" })
+node:field("enabled", "boolean", { default = true })
+node:field("side", "direction", { default = "front" })
+node:field("mode", "choice", {
+    default = "normal",
+    choices = { "normal", "inverted" }
+})
+node:field("speed", "number", {
+    default = 10,
+    min = 0,
+    max = 20,
+    control = "slider",
+    step = 1
+})
+```
 
 See [Lua API Reference](lua-api-reference.md), [Types and State](types-and-state.md), [Sandbox and Budgets](sandbox-and-budgets.md), and the files under `docs/lua/examples`.

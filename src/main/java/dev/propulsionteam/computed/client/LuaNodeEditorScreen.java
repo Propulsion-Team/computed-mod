@@ -31,6 +31,7 @@ public final class LuaNodeEditorScreen extends Screen {
             "node:input(\"id\", \"number\", { default = 0 })",
             "node:output(\"id\", \"number\")",
             "node:field(\"id\", \"number\", { default = 0 })",
+            "node:field(\"id\", \"number\", { default = 0, min = 0, max = 1, control = \"slider\", step = 0.01, label = \"Value\" })",
             "node:state(\"id\", 0)",
             "node:execution(\"input\")",
             "node:on_run(function(ctx)",
@@ -714,7 +715,7 @@ public final class LuaNodeEditorScreen extends Screen {
             return "node:input(id, type, options?)";
         }
         if (prefix.contains("node:field")) {
-            return "node:field(id, fieldType, options?)";
+            return "node:field(id, fieldType, { default, min, max, choices, control, step, label })";
         }
         if (prefix.contains("ctx:output")) {
             return "ctx:output(id, value)";

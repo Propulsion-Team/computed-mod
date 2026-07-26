@@ -286,15 +286,16 @@ final class LuaNodeFieldControl {
         }
         String display = focused ? editBuffer + "_" : displayValue();
         int textX = schema.type() == FieldType.COLOR ? x + 16 : x + 4;
-        graphics.enableScissor(textX, y, x + CONTROL_WIDTH - 2, y + 14);
+        String visible = Minecraft.getInstance().font.plainSubstrByWidth(
+                display,
+                x + CONTROL_WIDTH - 3 - textX);
         graphics.drawString(
                 Minecraft.getInstance().font,
-                display,
+                visible,
                 textX,
                 y + 3,
                 ComputedEditorTheme.TEXT_PRIMARY,
                 false);
-        graphics.disableScissor();
     }
 
     private void renderDropdownOverlay(GuiGraphics graphics, int x, int y) {

@@ -703,7 +703,6 @@ public class WNodeScreen extends Screen {
         itemPickerItems.clear();
         BuiltInRegistries.ITEM.stream()
                 .map(ItemStack::new)
-                .filter(stack -> !stack.isEmpty())
                 .sorted(java.util.Comparator.comparing(
                         stack -> stack.getHoverName().getString(),
                         String.CASE_INSENSITIVE_ORDER))
