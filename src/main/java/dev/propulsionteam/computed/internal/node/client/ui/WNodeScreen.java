@@ -5,6 +5,7 @@ import dev.propulsionteam.computed.client.editor.EditorDetailLevel;
 import dev.propulsionteam.computed.client.editor.EditorHistory;
 import dev.propulsionteam.computed.client.editor.GraphPoint;
 import dev.propulsionteam.computed.client.editor.GraphRect;
+import dev.propulsionteam.computed.client.editor.canvas.InertialViewport;
 import dev.propulsionteam.computed.internal.node.api.WConnection;
 import dev.propulsionteam.computed.internal.node.api.WGraph;
 import dev.propulsionteam.computed.internal.node.api.WNode;
@@ -37,9 +38,7 @@ public class WNodeScreen extends Screen {
     private final WireEditorController wires = new WireEditorController();
     private final EditorHistory<WNodeScreen> history = new EditorHistory<>(this, MAX_HISTORY);
     private WGraph graph;
-    private double panX;
-    private double panY;
-    private float zoom = 1;
+    private final InertialViewport viewport = new InertialViewport();
     private long revision;
     private String saveFailure = "";
     private WNode selectedNode;
@@ -58,6 +57,7 @@ public class WNodeScreen extends Screen {
     private boolean panning;
     private double panLastX;
     private double panLastY;
+    private long panLastNanos;
     private int rightPressX = -1;
     private int rightPressY = -1;
     private long rightPressAt;
@@ -90,22 +90,20 @@ public class WNodeScreen extends Screen {
     }
 
     protected final void restoreEditorViewport(double panX, double panY, float zoom) {
-        this.panX = panX;
-        this.panY = panY;
-        this.zoom = Mth.clamp(zoom, 0.1f, 3);
+        viewport.restore(panX, panY, zoom);
         wires.invalidate();
     }
 
     protected final double editorPanX() {
-        return panX;
+        return viewport.panX();
     }
 
     protected final double editorPanY() {
-        return panY;
+        return viewport.panY();
     }
 
     protected final float editorZoom() {
-        return zoom;
+        return viewport.zoom();
     }
 
     protected final long editorRevision() {
@@ -141,7 +139,7 @@ public class WNodeScreen extends Screen {
     }
 
     protected final void adjustEditorZoom(double amount, double screenX, double screenY) {
-        zoom = Mth.clamp((float) (zoom + amount), 0.1f, 3);
+        viewport.addZoomImpulse(amount, screenX, screenY);
         wires.invalidate();
     }
 
@@ -232,12 +230,25 @@ public class WNodeScreen extends Screen {
                 ? 0.016f
                 : (float) ((now - lastFrameNanos) / 1_000_000_000.0);
         lastFrameNanos = now;
+        viewport.advance(delta, width, height);
         wires.advanceAnimation(delta);
+        graphics.drawManaged(() -> renderCanvas(graphics, mouseX, mouseY, partialTick));
+        super.render(graphics, mouseX, mouseY, partialTick);
+    }
+
+    private void renderCanvas(
+            GuiGraphics graphics,
+            int mouseX,
+            int mouseY,
+            float partialTick) {
         graphics.fill(0, 0, width, height, ComputedEditorTheme.BACKGROUND_PRIMARY);
         graphics.pose().pushPose();
         graphics.pose().translate(width / 2f, height / 2f, 0);
-        graphics.pose().scale(zoom, zoom, 1);
-        graphics.pose().translate(-width / 2f + panX, -height / 2f + panY, 0);
+        graphics.pose().scale(viewport.zoom(), viewport.zoom(), 1);
+        graphics.pose().translate(
+                -width / 2f + viewport.panX(),
+                -height / 2f + viewport.panY(),
+                0);
         drawGrid(graphics);
         int graphMouseX = screenToGraphX(mouseX);
         int graphMouseY = screenToGraphY(mouseY);
@@ -250,7 +261,7 @@ public class WNodeScreen extends Screen {
                 graphics,
                 graph,
                 viewport(),
-                zoom,
+                viewport.zoom(),
                 revision,
                 geometryMoving(),
                 EditorDetailLevel.FULL);
@@ -285,7 +296,6 @@ public class WNodeScreen extends Screen {
             graphics.fill(4, height - 17, width - 4, height - 3, 0xDD321818);
             graphics.drawString(font, saveFailure, 8, height - 14, 0xFFFF9999, false);
         }
-        super.render(graphics, mouseX, mouseY, partialTick);
     }
 
     @Override
@@ -309,12 +319,15 @@ public class WNodeScreen extends Screen {
             rightDragged = false;
             panLastX = mouseX;
             panLastY = mouseY;
+            panLastNanos = System.nanoTime();
             return true;
         }
         if (button == 2) {
             panning = true;
+            viewport.beginPan();
             panLastX = mouseX;
             panLastY = mouseY;
+            panLastNanos = System.nanoTime();
             return true;
         }
         if (button != 0) {
@@ -389,6 +402,9 @@ public class WNodeScreen extends Screen {
             double dragX,
             double dragY) {
         if (button == 1 && rightPressX >= 0) {
+            if (!rightDragged) {
+                viewport.beginPan();
+            }
             rightDragged = true;
             panBy(mouseX, mouseY);
             return true;
@@ -466,10 +482,12 @@ public class WNodeScreen extends Screen {
             rightPressX = -1;
             rightPressY = -1;
             rightDragged = false;
+            viewport.endPan();
             return true;
         }
         if (button == 2) {
             panning = false;
+            viewport.endPan();
             return true;
         }
         if (button != 0) {
@@ -512,7 +530,7 @@ public class WNodeScreen extends Screen {
         if (scrollY == 0) {
             return false;
         }
-        zoom = Mth.clamp((float) (zoom + scrollY * ZOOM_STEP), 0.1f, 3);
+        viewport.addZoomImpulse(scrollY * ZOOM_STEP, mouseX, mouseY);
         wires.invalidate();
         return true;
     }
@@ -626,10 +644,14 @@ public class WNodeScreen extends Screen {
     }
 
     private void panBy(double mouseX, double mouseY) {
-        panX += (mouseX - panLastX) / zoom;
-        panY += (mouseY - panLastY) / zoom;
+        long now = System.nanoTime();
+        double elapsed = panLastNanos == 0
+                ? 1.0 / 60.0
+                : (now - panLastNanos) / 1_000_000_000.0;
+        viewport.dragPan(mouseX - panLastX, mouseY - panLastY, elapsed);
         panLastX = mouseX;
         panLastY = mouseY;
+        panLastNanos = now;
         wires.invalidateHoverCache();
     }
 
@@ -638,7 +660,7 @@ public class WNodeScreen extends Screen {
                 graph,
                 graphX,
                 graphY,
-                zoom,
+                viewport.zoom(),
                 revision,
                 geometryMoving(),
                 point -> blocksWire(point));
@@ -653,19 +675,19 @@ public class WNodeScreen extends Screen {
     }
 
     private GraphRect viewport() {
-        double left = screenToGraphX(0) - 36 / zoom;
-        double top = screenToGraphY(0) - 36 / zoom;
-        double right = screenToGraphX(width) + 36 / zoom;
-        double bottom = screenToGraphY(height) + 36 / zoom;
+        double left = screenToGraphX(0) - 36 / viewport.zoom();
+        double top = screenToGraphY(0) - 36 / viewport.zoom();
+        double right = screenToGraphX(width) + 36 / viewport.zoom();
+        double bottom = screenToGraphY(height) + 36 / viewport.zoom();
         return new GraphRect(left, top, right, bottom);
     }
 
     private int screenToGraphX(double screenX) {
-        return (int) ((screenX - width / 2.0) / zoom + width / 2.0 - panX);
+        return (int) viewport.graphX(screenX, width);
     }
 
     private int screenToGraphY(double screenY) {
-        return (int) ((screenY - height / 2.0) / zoom + height / 2.0 - panY);
+        return (int) viewport.graphY(screenY, height);
     }
 
     private void drawGrid(GuiGraphics graphics) {
