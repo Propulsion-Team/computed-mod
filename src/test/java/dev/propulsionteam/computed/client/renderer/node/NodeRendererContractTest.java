@@ -70,8 +70,8 @@ class NodeRendererContractTest {
     }
 
     @Test
-    void keepsPinTextClearOfTheInsetPanelBevel() {
-        assertTrue(BedrockNodeRenderer.PANEL_INSET >= 5);
+    void keepsPinTextClearOfTheContentEdge() {
+        assertTrue(BedrockNodeRenderer.CONTENT_INSET >= 5);
         assertTrue(BedrockNodeRenderer.PIN_LABEL_PADDING >= 5);
     }
 }

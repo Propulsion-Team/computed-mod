@@ -8,8 +8,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 
 public final class BedrockNodeRenderer {
-    static final int PANEL_INSET = 5;
+    static final int CONTENT_INSET = 5;
     static final int PIN_LABEL_PADDING = 5;
+    private static final int PIN_SIZE = 5;
+    private static final int PIN_HOVER_SIZE = 7;
 
     private BedrockNodeRenderer() {}
 
@@ -48,13 +50,6 @@ public final class BedrockNodeRenderer {
         graphics.fill(x + 3, y + 3, x + width - 3, y + 15, frame);
         graphics.fill(x + 4, y + 4, x + width - 4, y + 14, 0xCC101418);
         graphics.fill(x + 5, y + 17, x + width - 5, y + height - 5, 0xFF0E1114);
-        ComputedEditorStyle.drawPixelOutline(
-                graphics,
-                x + 5,
-                y + 17,
-                width - 10,
-                Math.max(1, height - 22),
-                0xFF303941);
         graphics.drawString(
                 Minecraft.getInstance().font,
                 node.getTitle(),
@@ -63,7 +58,14 @@ public final class BedrockNodeRenderer {
                 ComputedEditorTheme.TEXT_HEADER,
                 false);
         for (int index = 0; index < node.getInputs().size(); index++) {
-            renderPin(graphics, node.getInputs().get(index), x - 4, y + 18 + index * 12, true);
+            renderPin(
+                    graphics,
+                    node.getInputs().get(index),
+                    x - 4,
+                    y + 18 + index * 12,
+                    true,
+                    mouseX,
+                    mouseY);
         }
         for (int index = 0; index < node.getOutputs().size(); index++) {
             renderPin(
@@ -71,7 +73,9 @@ public final class BedrockNodeRenderer {
                     node.getOutputs().get(index),
                     x + width - 1,
                     y + 18 + index * 12,
-                    false);
+                    false,
+                    mouseX,
+                    mouseY);
         }
     }
 
@@ -80,21 +84,42 @@ public final class BedrockNodeRenderer {
             WPin pin,
             int x,
             int y,
-            boolean input) {
+            boolean input,
+            int mouseX,
+            int mouseY) {
+        boolean hovered = mouseX >= x - 1
+                && mouseX <= x + PIN_SIZE
+                && mouseY >= y - 1
+                && mouseY <= y + PIN_SIZE;
+        int size = hovered ? PIN_HOVER_SIZE : PIN_SIZE;
+        int left = x - (size - PIN_SIZE) / 2;
+        int top = y - (size - PIN_SIZE) / 2;
         int color = pin.getColor();
-        graphics.fill(x, y, x + 5, y + 5, color);
+        graphics.fill(
+                left,
+                top,
+                left + size,
+                top + size,
+                pin.isConnected() || hovered ? color : color & 0x66FFFFFF);
         ComputedEditorStyle.drawPixelOutline(
                 graphics,
-                x,
-                y,
-                5,
-                5,
-                ComputedEditorTheme.SOCKET_BORDER);
-        graphics.fill(x + 2, y + 2, x + 4, y + 4, ComputedEditorTheme.SOCKET_CENTER);
+                left,
+                top,
+                size,
+                size,
+                hovered ? ComputedEditorTheme.TEXT_HEADER : ComputedEditorTheme.SOCKET_BORDER);
+        int centerLeft = left + Math.max(1, size / 2 - 1);
+        int centerTop = top + Math.max(1, size / 2 - 1);
+        graphics.fill(
+                centerLeft,
+                centerTop,
+                centerLeft + 2,
+                centerTop + 2,
+                ComputedEditorTheme.SOCKET_CENTER);
         String label = pin.getName();
         int textX = input
-                ? x + 4 + PANEL_INSET + PIN_LABEL_PADDING
-                : x - PANEL_INSET - PIN_LABEL_PADDING
+                ? x + 4 + CONTENT_INSET + PIN_LABEL_PADDING
+                : x - CONTENT_INSET - PIN_LABEL_PADDING
                         - Minecraft.getInstance().font.width(label);
         graphics.drawString(
                 Minecraft.getInstance().font,
