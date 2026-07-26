@@ -6,6 +6,8 @@ import dev.propulsionteam.computed.content.Peripherals;
 import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
 import dev.propulsionteam.computed.content.monitors.widgets.ButtonWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.ClockWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.MonitorWidgetLayout;
 import dev.propulsionteam.computed.content.monitors.widgets.ProgressBarWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.SliderWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.TextAlignment;
@@ -19,6 +21,7 @@ import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
 import dev.propulsionteam.computed.network.ComputerEditPolicy;
+import dev.propulsionteam.computed.network.ComputedNetworking;
 import dev.propulsionteam.computed.persistence.ProgramV3Codec;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -398,12 +401,27 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
 
     @Override
     public void showWidgets(String target, List<BuiltinWidget> definitions) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        MinecraftServer server = level.getServer();
+        if (server != null && !server.isSameThread()) {
+            String queuedTarget = target;
+            List<BuiltinWidget> queuedDefinitions = List.copyOf(definitions);
+            server.execute(() -> applyWidgets(queuedTarget, queuedDefinitions));
+            return;
+        }
+        applyWidgets(target, definitions);
+    }
+
+    private void applyWidgets(String target, List<BuiltinWidget> definitions) {
         Direction direction = worldFace(target);
         if (direction == null || level == null || level.isClientSide) {
             return;
         }
-        if (!(level.getBlockEntity(worldPosition.relative(direction))
-                instanceof MonitorBlockEntity monitor)) {
+        BlockPos targetPos = worldPosition.relative(direction);
+        var targetEntity = level.getBlockEntity(targetPos);
+        if (!(targetEntity instanceof MonitorBlockEntity monitor)) {
             return;
         }
         MonitorBlockEntity origin = monitor.findOrigin();
@@ -414,6 +432,9 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
                 .map(ComputerBlockEntity::toWidget)
                 .filter(java.util.Objects::nonNull)
                 .toList();
+        int screenWidth = origin.getWidth() * ComputedNetworking.SCREEN_PX_PER_BLOCK;
+        int screenHeight = origin.getHeight() * ComputedNetworking.SCREEN_PX_PER_BLOCK;
+        widgets = MonitorWidgetLayout.resolve(widgets, screenWidth, screenHeight);
         origin.bindOwner(worldPosition);
         origin.setDrawList(new WidgetDrawList(widgets));
     }
@@ -553,7 +574,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
 
     private static Widget toWidget(BuiltinWidget widget) {
         Map<String, Object> properties = widget.properties();
-        return switch (widget.type()) {
+        Widget raw = switch (widget.type()) {
             case "text" -> new TextWidget(
                     widget.id(),
                     widget.x(),
@@ -603,6 +624,23 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
                     (int) number(properties, "segments"));
             default -> null;
         };
+        if (raw == null) {
+            return null;
+        }
+        LayoutManagedWidget.LayoutMode mode =
+                "manual".equalsIgnoreCase(text(properties, "layout_mode"))
+                        ? LayoutManagedWidget.LayoutMode.MANUAL
+                        : LayoutManagedWidget.LayoutMode.LINE;
+        LayoutManagedWidget.Fit fit =
+                "fill".equalsIgnoreCase(text(properties, "fit"))
+                        ? LayoutManagedWidget.Fit.FILL
+                        : LayoutManagedWidget.Fit.AUTO;
+        return new LayoutManagedWidget(
+                raw,
+                mode,
+                Math.max(1, (int) Math.round(number(properties, "line"))),
+                Math.max(1, Math.round(number(properties, "span"))),
+                fit);
     }
 
     private static String text(Map<String, Object> properties, String key) {

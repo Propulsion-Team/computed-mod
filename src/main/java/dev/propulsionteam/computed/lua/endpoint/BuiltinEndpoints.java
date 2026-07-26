@@ -239,6 +239,10 @@ public final class BuiltinEndpoints {
         copyText(table, properties, "text", "");
         copyText(table, properties, "label", "");
         copyText(table, properties, "alignment", "left");
+        copyText(table, properties, "layout_mode", "line");
+        copyText(table, properties, "fit", "auto");
+        copyNumber(table, properties, "line", 1);
+        copyNumber(table, properties, "span", 1);
         copyNumber(table, properties, "value", 0);
         copyNumber(table, properties, "minimum", 0);
         copyNumber(table, properties, "maximum", 1);

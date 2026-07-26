@@ -1,7 +1,9 @@
 package dev.propulsionteam.computed.client.renderer.node;
 
 import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
+import dev.propulsionteam.computed.lua.node.LuaFieldSchema;
 import dev.propulsionteam.computed.lua.node.NodeStyle;
+import java.util.List;
 
 public record NodeRenderLayout(
         int width,
@@ -15,8 +17,14 @@ public record NodeRenderLayout(
         boolean sideRail) {
 
     public static NodeRenderLayout measure(LuaNodeDefinition definition) {
+        return measure(definition, definition.fields());
+    }
+
+    public static NodeRenderLayout measure(
+            LuaNodeDefinition definition,
+            List<LuaFieldSchema> visibleFields) {
         int portRows = Math.max(definition.inputs().size(), definition.outputs().size());
-        int fieldRows = definition.fields().size();
+        int fieldRows = visibleFields.size();
         boolean compact = definition.style() == NodeStyle.COMPACT;
         boolean sideRail = compact || definition.style() == NodeStyle.SINK;
         int titleWidth = definition.title().length() * 6 + 20;
@@ -29,7 +37,7 @@ public record NodeRenderLayout(
                 .max()
                 .orElse(0);
         int portWidth = inputWidth + outputWidth + 38;
-        int fieldWidth = definition.fields().stream()
+        int fieldWidth = visibleFields.stream()
                 .mapToInt(field -> field.label().length() * 6 + 108)
                 .max()
                 .orElse(0);

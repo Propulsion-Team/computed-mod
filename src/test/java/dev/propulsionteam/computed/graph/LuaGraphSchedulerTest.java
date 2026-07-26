@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
+import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
 import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
 import dev.propulsionteam.computed.lua.node.ConnectionType;
 import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
@@ -123,6 +124,60 @@ class LuaGraphSchedulerTest {
     }
 
     @Test
+    void sendsClockWidgetToMonitorEndpoint() {
+        Map<String, LuaDefinitionSource> bundled = BundledLuaLibrary.load();
+        UUID colorId = uuid(10);
+        UUID clockId = uuid(11);
+        UUID monitorId = uuid(12);
+        GraphNode color = new GraphNode(
+                colorId,
+                "computed:color_source",
+                bundled.get("computed:color_source").hash(),
+                -100,
+                0,
+                List.of(port("color", PortDirection.OUTPUT, ConnectionType.NUMBER)),
+                Map.of("color", codec.encode(LuaValue.valueOf(0xffffffffL))));
+        GraphNode clock = new GraphNode(
+                clockId,
+                "computed:clock_widget",
+                bundled.get("computed:clock_widget").hash(),
+                0,
+                0,
+                List.of(
+                        port("color", PortDirection.INPUT, ConnectionType.NUMBER),
+                        port("widget", PortDirection.OUTPUT, ConnectionType.WIDGET)),
+                Map.of());
+        GraphNode monitor = new GraphNode(
+                monitorId,
+                "computed:peripheral",
+                bundled.get("computed:peripheral").hash(),
+                100,
+                0,
+                List.of(port("widget_1", PortDirection.INPUT, ConnectionType.WIDGET)),
+                Map.of());
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(
+                        uuid(105),
+                        List.of(monitor, clock, color),
+                        List.of(
+                                edge(colorId, "color", clockId, "color"),
+                                edge(clockId, "widget", monitorId, "widget_1"))),
+                Map.of(),
+                Map.of(),
+                null);
+        Host host = new Host();
+
+        LuaGraphTickResult result = new LuaGraphScheduler(program, uuid(206), host).tick(false);
+
+        assertTrue(result.diagnostics().isEmpty());
+        assertEquals(List.of("front"), host.monitorTargets);
+        assertEquals(1, host.monitorWidgets.getFirst().size());
+        assertEquals("clock", host.monitorWidgets.getFirst().getFirst().type());
+        assertEquals(clockId, host.monitorWidgets.getFirst().getFirst().id());
+    }
+
+    @Test
     void keepsMissingDefinitionsAsDiagnosedNonExecutableNodes() {
         UUID nodeId = uuid(20);
         GraphNode missing = new GraphNode(
@@ -221,6 +276,8 @@ class LuaGraphSchedulerTest {
 
     private static final class Host implements BuiltinEndpointHost {
         private final List<String> commands = new ArrayList<>();
+        private final List<String> monitorTargets = new ArrayList<>();
+        private final List<List<BuiltinWidget>> monitorWidgets = new ArrayList<>();
 
         @Override
         public double worldTime() {
@@ -230,6 +287,12 @@ class LuaGraphSchedulerTest {
         @Override
         public void runCommand(String command) {
             commands.add(command);
+        }
+
+        @Override
+        public void showWidgets(String target, List<BuiltinWidget> widgets) {
+            monitorTargets.add(target);
+            monitorWidgets.add(widgets);
         }
     }
 }

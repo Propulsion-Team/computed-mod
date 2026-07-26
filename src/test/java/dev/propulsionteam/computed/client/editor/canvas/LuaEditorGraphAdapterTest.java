@@ -208,6 +208,54 @@ class LuaEditorGraphAdapterTest {
     }
 
     @Test
+    void conditionalFieldsResizeWithTheirControllingChoiceAndKeepHiddenValues() {
+        String source = """
+                local node = computed.node(1, "example:conditional", "Conditional")
+                node:field("layout", "choice", {
+                    default = "line",
+                    choices = { "line", "manual" }
+                })
+                node:field("line", "number", {
+                    default = 1,
+                    visible_when = { field = "layout", equals = "line" }
+                })
+                node:field("x", "number", {
+                    default = 0,
+                    visible_when = { field = "layout", equals = "manual" }
+                })
+                node:field("y", "number", {
+                    default = 0,
+                    visible_when = { field = "layout", equals = "manual" }
+                })
+                node:on_run(function(ctx) end)
+                return node
+                """;
+        var definition = dev.propulsionteam.computed.graph.LuaDefinitionSource.embedded(
+                1,
+                "example:conditional",
+                source);
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(uuid(35), List.of(), List.of()),
+                Map.of(definition.id(), definition),
+                Map.of(),
+                null);
+        LuaEditorNode node = LuaEditorGraphAdapter.createEditorNode(program, definition.id(), 0, 0);
+        int lineHeight = node.getHeight();
+        node.setFieldValue("x", org.luaj.vm2.LuaValue.valueOf(24));
+
+        node.setFieldValue("layout", org.luaj.vm2.LuaValue.valueOf("manual"));
+
+        assertEquals(lineHeight + LuaNodeFieldControl.ROW_HEIGHT, node.getHeight());
+        assertEquals(24, node.fieldValue("x").toint());
+
+        node.setFieldValue("layout", org.luaj.vm2.LuaValue.valueOf("line"));
+
+        assertEquals(lineHeight, node.getHeight());
+        assertEquals(24, node.fieldValue("x").toint());
+    }
+
+    @Test
     void creationAddsTheDefinitionAndFirstInstanceAtomically() {
         String source = """
                 local node = computed.node(1, "user:created", "Created")

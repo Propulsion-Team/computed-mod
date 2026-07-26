@@ -100,6 +100,8 @@ public final class LuaEditorNode extends WNode {
             LuaNodeFieldControl control = fieldControls.get(index);
             if (control.schema().id().equals(id)) {
                 fieldControls.set(index, new LuaNodeFieldControl(control.schema(), value));
+                clearHiddenFocus();
+                updateLayout();
                 return true;
             }
         }
@@ -111,8 +113,9 @@ public final class LuaEditorNode extends WNode {
         BedrockNodeRenderer.render(graphics, this, category, false, false, mouseX, mouseY);
         int accent = NodePalette.category(category).frameArgb();
         int fieldsY = getY() + fieldsTop();
-        for (int index = 0; index < fieldControls.size(); index++) {
-            fieldControls.get(index).render(
+        List<LuaNodeFieldControl> visible = visibleFieldControls();
+        for (int index = 0; index < visible.size(); index++) {
+            visible.get(index).render(
                     graphics,
                     getX(),
                     fieldsY + index * LuaNodeFieldControl.ROW_HEIGHT,
@@ -129,28 +132,32 @@ public final class LuaEditorNode extends WNode {
             super.updateLayout();
             return;
         }
-        NodeRenderLayout layout = NodeRenderLayout.measure(definition);
+        NodeRenderLayout layout = NodeRenderLayout.measure(
+                definition,
+                visibleFieldControls().stream().map(LuaNodeFieldControl::schema).toList());
         setMeasuredSize(layout.width(), layout.height());
     }
 
     @Override
     public boolean hasInteractiveElementAt(double mouseX, double mouseY) {
-        if (fieldControls.stream().anyMatch(LuaNodeFieldControl::focused)) {
+        List<LuaNodeFieldControl> visible = visibleFieldControls();
+        if (visible.stream().anyMatch(LuaNodeFieldControl::focused)) {
             return true;
         }
         int first = fieldsTop();
-        return !fieldControls.isEmpty()
+        return !visible.isEmpty()
                 && mouseX >= 6
                 && mouseX < getWidth() - 6
                 && mouseY >= first
-                && mouseY < first + fieldControls.size() * LuaNodeFieldControl.ROW_HEIGHT;
+                && mouseY < first + visible.size() * LuaNodeFieldControl.ROW_HEIGHT;
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         int first = fieldsTop();
-        for (int index = 0; index < fieldControls.size(); index++) {
-            LuaNodeFieldControl control = fieldControls.get(index);
+        List<LuaNodeFieldControl> visible = visibleFieldControls();
+        for (int index = 0; index < visible.size(); index++) {
+            LuaNodeFieldControl control = visible.get(index);
             if (control.mouseClicked(
                     mouseX,
                     mouseY,
@@ -160,6 +167,8 @@ public final class LuaEditorNode extends WNode {
                 fieldControls.stream()
                         .filter(other -> other != control)
                         .forEach(LuaNodeFieldControl::clearFocus);
+                clearHiddenFocus();
+                updateLayout();
                 return true;
             }
         }
@@ -174,7 +183,7 @@ public final class LuaEditorNode extends WNode {
             int button,
             double dragX,
             double dragY) {
-        for (LuaNodeFieldControl control : fieldControls) {
+        for (LuaNodeFieldControl control : visibleFieldControls()) {
             if (control.mouseDragged(mouseX, button, getWidth())) {
                 return true;
             }
@@ -184,7 +193,7 @@ public final class LuaEditorNode extends WNode {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        for (LuaNodeFieldControl control : fieldControls) {
+        for (LuaNodeFieldControl control : visibleFieldControls()) {
             if (control.mouseReleased(button)) {
                 return true;
             }
@@ -194,7 +203,7 @@ public final class LuaEditorNode extends WNode {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        for (LuaNodeFieldControl control : fieldControls) {
+        for (LuaNodeFieldControl control : visibleFieldControls()) {
             if (control.keyPressed(keyCode)) {
                 return true;
             }
@@ -204,7 +213,7 @@ public final class LuaEditorNode extends WNode {
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
-        for (LuaNodeFieldControl control : fieldControls) {
+        for (LuaNodeFieldControl control : visibleFieldControls()) {
             if (control.charTyped(codePoint)) {
                 return true;
             }
@@ -214,7 +223,7 @@ public final class LuaEditorNode extends WNode {
 
     @Override
     public boolean hasFocusedElement() {
-        return fieldControls.stream().anyMatch(LuaNodeFieldControl::focused);
+        return visibleFieldControls().stream().anyMatch(LuaNodeFieldControl::focused);
     }
 
     @Override
@@ -278,6 +287,29 @@ public final class LuaEditorNode extends WNode {
     private int fieldsTop() {
         int portRows = Math.max(getInputs().size(), getOutputs().size());
         return 20 + portRows * 12 + (portRows == 0 ? 0 : 4);
+    }
+
+    private List<LuaNodeFieldControl> visibleFieldControls() {
+        return fieldControls.stream().filter(this::isVisible).toList();
+    }
+
+    private boolean isVisible(LuaNodeFieldControl control) {
+        String controllingId = control.schema().visibleWhenField();
+        if (controllingId == null) {
+            return true;
+        }
+        org.luaj.vm2.LuaValue controllingValue = fieldControls.stream()
+                .filter(candidate -> candidate.schema().id().equals(controllingId))
+                .map(LuaNodeFieldControl::value)
+                .findFirst()
+                .orElse(org.luaj.vm2.LuaValue.NIL);
+        return control.schema().visibleWhenValue().equals(controllingValue.tojstring());
+    }
+
+    private void clearHiddenFocus() {
+        fieldControls.stream()
+                .filter(control -> !isVisible(control))
+                .forEach(LuaNodeFieldControl::clearFocus);
     }
 
     private static WPin.DataType dataType(ConnectionType type) {

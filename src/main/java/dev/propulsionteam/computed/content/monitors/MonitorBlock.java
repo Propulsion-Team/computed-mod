@@ -134,6 +134,7 @@ public class MonitorBlock extends BaseEntityBlock {
         if (type != ComputedRegistries.MONITOR_BLOCK_ENTITY.get()) return null;
         return (lvl, pos, st, be) -> {
             if (be instanceof MonitorBlockEntity m) {
+                m.blockTick();
                 MonitorBlockEntity.serverTick(lvl, pos, st, m);
             }
         };
@@ -156,7 +157,7 @@ public class MonitorBlock extends BaseEntityBlock {
             double usableW = Math.max(0.001, blocksW - inset * 2.0);
             double usableH = Math.max(0.001, blocksH - inset * 2.0);
 
-            Direction facing = origin.getDirection();
+            Direction facing = origin.getFront();
             Direction right = origin.getRight();
             Direction gridDown = origin.getDown();
             Vec3 originCorner = Vec3.atLowerCornerOf(origin.getBlockPos());

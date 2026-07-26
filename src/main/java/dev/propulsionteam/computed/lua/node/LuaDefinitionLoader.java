@@ -180,6 +180,14 @@ public final class LuaDefinitionLoader {
                     ? FieldControl.VALUE
                     : FieldControl.parse(options.get("control").checkjstring());
             Double step = optionalNumber(options.get("step"));
+            String visibleWhenField = null;
+            String visibleWhenValue = null;
+            LuaValue visibleWhen = options.get("visible_when");
+            if (!visibleWhen.isnil()) {
+                LuaTable condition = visibleWhen.checktable();
+                visibleWhenField = condition.get("field").checkjstring();
+                visibleWhenValue = condition.get("equals").checkjstring();
+            }
             LuaFieldSchema schema = new LuaFieldSchema(
                     fieldId,
                     type,
@@ -189,7 +197,9 @@ public final class LuaDefinitionLoader {
                     maximum,
                     label,
                     control,
-                    step);
+                    step,
+                    visibleWhenField,
+                    visibleWhenValue);
             String error = LuaFieldValues.validationError(schema, schema.defaultValue());
             if (error != null) {
                 throw new LuaDefinitionException(error);
@@ -199,6 +209,19 @@ public final class LuaDefinitionLoader {
 
         private LuaNodeDefinition build() {
             ensureMutable();
+            for (LuaFieldSchema field : fields) {
+                if (field.visibleWhenField() != null
+                        && fields.stream().noneMatch(candidate ->
+                                candidate.id().equals(field.visibleWhenField()))) {
+                    throw new LuaDefinitionException(
+                            "Field " + field.id() + " visibility references unknown field "
+                                    + field.visibleWhenField());
+                }
+                if (field.id().equals(field.visibleWhenField())) {
+                    throw new LuaDefinitionException(
+                            "Field " + field.id() + " cannot control its own visibility");
+                }
+            }
             built = true;
             return new LuaNodeDefinition(
                     apiVersion,

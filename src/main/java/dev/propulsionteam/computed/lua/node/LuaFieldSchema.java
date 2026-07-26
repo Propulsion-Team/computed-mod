@@ -13,7 +13,9 @@ public record LuaFieldSchema(
         Double maximum,
         String label,
         FieldControl control,
-        Double step) {
+        Double step,
+        String visibleWhenField,
+        String visibleWhenValue) {
 
     public LuaFieldSchema {
         id = LuaSchemaNames.requireStableId(id, "field");
@@ -22,6 +24,14 @@ public record LuaFieldSchema(
         choices = choices == null ? List.of() : List.copyOf(choices);
         label = label == null || label.isBlank() ? readableLabel(id) : label.strip();
         control = control == null ? FieldControl.VALUE : control;
+        visibleWhenField = visibleWhenField == null || visibleWhenField.isBlank()
+                ? null
+                : LuaSchemaNames.requireStableId(visibleWhenField, "visibility field");
+        visibleWhenValue = visibleWhenValue == null ? null : visibleWhenValue;
+        if ((visibleWhenField == null) != (visibleWhenValue == null)) {
+            throw new LuaDefinitionException(
+                    "Field visibility requires both a controlling field and expected value");
+        }
         if (label.length() > 64) {
             throw new LuaDefinitionException("Field " + id + " label exceeds 64 characters");
         }
