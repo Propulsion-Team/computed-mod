@@ -25,6 +25,14 @@ import org.lwjgl.glfw.GLFW;
 import org.luaj.vm2.LuaValue;
 
 public final class LuaNodeEditorScreen extends Screen {
+    private static final int SOURCE_TOP = 26;
+    private static final int SOURCE_TEXT_X = 42;
+    private static final int SOURCE_TEXT_Y = 31;
+    private static final int SOURCE_LINE_HEIGHT = 11;
+    private static final int SCROLLBAR_SIZE = 7;
+    private static final int SCROLLBAR_MIN_THUMB = 12;
+    private static final int HORIZONTAL_SCROLLBAR_Y_OFFSET = 40;
+    private static final int SOURCE_BOTTOM_RESERVE = 42;
     private static final List<String> COMPLETIONS = List.of(
             "computed.node(1, \"namespace:id\", \"Title\")",
             "node:category(\"utility\")",
@@ -60,6 +68,10 @@ public final class LuaNodeEditorScreen extends Screen {
     private int cursor;
     private int firstLine;
     private int horizontalScroll;
+    private boolean revealCursor = true;
+    private boolean draggingVerticalScrollbar;
+    private boolean draggingHorizontalScrollbar;
+    private int scrollbarDragOffset;
     private List<List<LuaSyntaxHighlighter.Span>> highlightedLines;
     private boolean sourceFocused = true;
     private boolean completionOpen;
@@ -140,6 +152,12 @@ public final class LuaNodeEditorScreen extends Screen {
             return true;
         }
         int divider = Math.max(300, width * 3 / 5);
+        if (beginScrollbarDrag(mouseX, mouseY, divider)) {
+            sourceFocused = true;
+            completionOpen = false;
+            revealCursor = false;
+            return true;
+        }
         if (contains(mouseX, mouseY, divider - 292, 5, 42, 18)) {
             minecraft.keyboardHandler.setClipboard(source);
             status = "Lua source copied";
@@ -173,7 +191,10 @@ public final class LuaNodeEditorScreen extends Screen {
             int clampedLine = Mth.clamp(line, 0, Math.max(0, lines.length - 1));
             cursor = offsetAtLine(
                     clampedLine,
-                    columnAtPixel(lines[clampedLine], (int) mouseX - 42 + horizontalScroll));
+                    columnAtPixel(
+                            lines[clampedLine],
+                            (int) mouseX - SOURCE_TEXT_X + horizontalScroll));
+            revealCursor = false;
             return true;
         }
         sourceFocused = false;
@@ -191,20 +212,50 @@ public final class LuaNodeEditorScreen extends Screen {
             if (hasShiftDown() || scrollX != 0) {
                 double amount = scrollX != 0 ? scrollX : scrollY;
                 horizontalScroll = Mth.clamp(
-                        horizontalScroll - (int) Math.signum(amount) * 24,
+                        horizontalScroll - scrollPixels(amount),
                         0,
                         maximumHorizontalScroll(divider));
+                revealCursor = false;
                 return true;
             }
-            int lines = source.split("\n", -1).length;
-            int visible = Math.max(1, (height - 62) / 11);
             firstLine = Mth.clamp(
-                    firstLine - (int) Math.signum(scrollY) * 3,
+                    firstLine - scrollLines(scrollY),
                     0,
-                    Math.max(0, lines - visible));
+                    maximumVerticalScroll());
+            revealCursor = false;
             return true;
         }
         return false;
+    }
+
+    @Override
+    public boolean mouseDragged(
+            double mouseX,
+            double mouseY,
+            int button,
+            double dragX,
+            double dragY) {
+        if (button == 0 && (draggingVerticalScrollbar || draggingHorizontalScrollbar)) {
+            int divider = Math.max(300, width * 3 / 5);
+            if (draggingVerticalScrollbar) {
+                setVerticalScrollFromThumb((int) mouseY - scrollbarDragOffset);
+            } else {
+                setHorizontalScrollFromThumb((int) mouseX - scrollbarDragOffset, divider);
+            }
+            revealCursor = false;
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && (draggingVerticalScrollbar || draggingHorizontalScrollbar)) {
+            draggingVerticalScrollbar = false;
+            draggingHorizontalScrollbar = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override
@@ -242,6 +293,7 @@ public final class LuaNodeEditorScreen extends Screen {
         }
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_A) {
             cursor = source.length();
+            revealCursor = true;
             return true;
         }
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_C) {
@@ -254,33 +306,40 @@ public final class LuaNodeEditorScreen extends Screen {
         }
         if (keyCode == GLFW.GLFW_KEY_LEFT) {
             cursor = Math.max(0, cursor - 1);
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_RIGHT) {
             cursor = Math.min(source.length(), cursor + 1);
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
             moveVertical(keyCode == GLFW.GLFW_KEY_UP ? -1 : 1);
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_HOME) {
             cursor = lineStart(cursor);
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_END) {
             cursor = lineEnd(cursor);
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_BACKSPACE && cursor > 0) {
             source = source.substring(0, cursor - 1) + source.substring(cursor);
             cursor--;
             changed();
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_DELETE && cursor < source.length()) {
             source = source.substring(0, cursor) + source.substring(cursor + 1);
             changed();
+            revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER) {
@@ -333,14 +392,21 @@ public final class LuaNodeEditorScreen extends Screen {
 
     private void renderSource(GuiGraphics graphics, int divider) {
         String[] lines = source.split("\n", -1);
-        int visible = Math.max(1, (height - 62) / 11);
+        int visible = visibleSourceLines();
         int cursorLine = lineOf(cursor);
         int cursorColumn = cursor - lineStart(cursor);
-        ensureCursorVisible(divider, lines, cursorLine, cursorColumn);
+        if (revealCursor) {
+            ensureCursorVisible(divider, lines, cursorLine, cursorColumn);
+            revealCursor = false;
+        } else {
+            firstLine = Mth.clamp(firstLine, 0, maximumVerticalScroll());
+            horizontalScroll =
+                    Mth.clamp(horizontalScroll, 0, maximumHorizontalScroll(divider));
+        }
         for (int lineIndex = firstLine;
                 lineIndex < Math.min(lines.length, firstLine + visible);
                 lineIndex++) {
-            int y = 31 + (lineIndex - firstLine) * 11;
+            int y = SOURCE_TEXT_Y + (lineIndex - firstLine) * SOURCE_LINE_HEIGHT;
             graphics.drawString(
                     font,
                     Integer.toString(lineIndex + 1),
@@ -351,13 +417,13 @@ public final class LuaNodeEditorScreen extends Screen {
                             : ComputedEditorTheme.TEXT_TERTIARY,
                     false);
         }
-        graphics.enableScissor(37, 26, divider, height - 15);
+        graphics.enableScissor(37, SOURCE_TOP, divider - 10, height - SOURCE_BOTTOM_RESERVE);
         for (int lineIndex = firstLine;
                 lineIndex < Math.min(lines.length, firstLine + visible);
                 lineIndex++) {
-            int y = 31 + (lineIndex - firstLine) * 11;
+            int y = SOURCE_TEXT_Y + (lineIndex - firstLine) * SOURCE_LINE_HEIGHT;
             String line = lines[lineIndex];
-            int x = 42 - horizontalScroll;
+            int x = SOURCE_TEXT_X - horizontalScroll;
             List<LuaSyntaxHighlighter.Span> spans = lineIndex < highlightedLines.size()
                     ? highlightedLines.get(lineIndex)
                     : List.of(new LuaSyntaxHighlighter.Span(line, LuaSyntaxHighlighter.DEFAULT));
@@ -368,7 +434,7 @@ public final class LuaNodeEditorScreen extends Screen {
             if (sourceFocused
                     && lineIndex == cursorLine
                     && (System.currentTimeMillis() / 500) % 2 == 0) {
-                int cursorX = 42
+                int cursorX = SOURCE_TEXT_X
                         - horizontalScroll
                         + font.width(line.substring(0, Math.min(cursorColumn, line.length())));
                 graphics.vLine(cursorX, y - 1, y + 9, ComputedEditorTheme.TEXT_HEADER);
@@ -376,9 +442,10 @@ public final class LuaNodeEditorScreen extends Screen {
         }
         graphics.disableScissor();
         graphics.vLine(36, 26, height - 1, ComputedEditorTheme.BORDER_SUBTLE);
+        renderSourceScrollbars(graphics, divider);
         String help = signatureHelp();
         if (!help.isEmpty()) {
-            graphics.fill(42, height - 30, divider - 6, height - 16, 0xEE1A1A1A);
+            graphics.fill(SOURCE_TEXT_X, height - 30, divider - 6, height - 16, 0xEE1A1A1A);
             graphics.drawString(font, help, 47, height - 27, ComputedEditorTheme.TEXT_SECONDARY, false);
         }
     }
@@ -632,6 +699,9 @@ public final class LuaNodeEditorScreen extends Screen {
     private void replaceSource(String replacement) {
         source = replacement == null ? "" : replacement;
         cursor = source.length();
+        firstLine = 0;
+        horizontalScroll = 0;
+        revealCursor = true;
         changed();
     }
 
@@ -686,11 +756,13 @@ public final class LuaNodeEditorScreen extends Screen {
         source = source.substring(0, cursor) + text + source.substring(cursor);
         cursor += text.length();
         changed();
+        revealCursor = true;
     }
 
     private void changed() {
         replacementConfirmation = false;
         completionOpen = false;
+        revealCursor = true;
         highlightedLines = LuaSyntaxHighlighter.highlight(source);
         session.sourceChanged(source, net.minecraft.Util.getMillis());
     }
@@ -718,10 +790,17 @@ public final class LuaNodeEditorScreen extends Screen {
         if (cursorLine < 0 || cursorLine >= lines.length) {
             return;
         }
+        int visible = visibleSourceLines();
+        if (cursorLine < firstLine) {
+            firstLine = cursorLine;
+        } else if (cursorLine >= firstLine + visible) {
+            firstLine = cursorLine - visible + 1;
+        }
+        firstLine = Mth.clamp(firstLine, 0, maximumVerticalScroll());
         String line = lines[cursorLine];
         int prefixWidth =
                 font.width(line.substring(0, Math.min(cursorColumn, line.length())));
-        int viewportWidth = Math.max(1, divider - 50);
+        int viewportWidth = sourceViewportWidth(divider);
         if (prefixWidth - horizontalScroll < 0) {
             horizontalScroll = prefixWidth;
         } else if (prefixWidth - horizontalScroll > viewportWidth) {
@@ -735,7 +814,211 @@ public final class LuaNodeEditorScreen extends Screen {
         for (String line : source.split("\n", -1)) {
             widest = Math.max(widest, font.width(line));
         }
-        return Math.max(0, widest - Math.max(1, divider - 50));
+        return Math.max(0, widest - sourceViewportWidth(divider));
+    }
+
+    private int maximumVerticalScroll() {
+        return Math.max(0, source.split("\n", -1).length - visibleSourceLines());
+    }
+
+    private int visibleSourceLines() {
+        return Math.max(1, (height - 62) / SOURCE_LINE_HEIGHT);
+    }
+
+    private static int sourceViewportWidth(int divider) {
+        return Math.max(1, divider - SOURCE_TEXT_X - 12);
+    }
+
+    private static int scrollPixels(double amount) {
+        if (amount == 0) {
+            return 0;
+        }
+        int pixels = Math.max(1, (int) Math.round(Math.abs(amount) * 24.0));
+        return amount < 0 ? -pixels : pixels;
+    }
+
+    private static int scrollLines(double amount) {
+        if (amount == 0) {
+            return 0;
+        }
+        int lines = Math.max(1, (int) Math.round(Math.abs(amount) * 3.0));
+        return amount < 0 ? -lines : lines;
+    }
+
+    private void renderSourceScrollbars(GuiGraphics graphics, int divider) {
+        int maximumVertical = maximumVerticalScroll();
+        if (maximumVertical > 0) {
+            int trackX = divider - 9;
+            int trackTop = SOURCE_TOP + 2;
+            int trackLength = verticalTrackLength();
+            int thumbLength = verticalThumbLength(trackLength);
+            int thumbTop = trackTop + scrollThumbOffset(firstLine, maximumVertical, trackLength, thumbLength);
+            graphics.fill(
+                    trackX,
+                    trackTop,
+                    trackX + SCROLLBAR_SIZE,
+                    trackTop + trackLength,
+                    ComputedEditorTheme.BACKGROUND_TERTIARY);
+            graphics.fill(
+                    trackX,
+                    thumbTop,
+                    trackX + SCROLLBAR_SIZE,
+                    thumbTop + thumbLength,
+                    ComputedEditorTheme.BORDER_HIGHLIGHT);
+        }
+
+        int maximumHorizontal = maximumHorizontalScroll(divider);
+        if (maximumHorizontal > 0) {
+            int trackX = SOURCE_TEXT_X - 2;
+            int trackY = height - HORIZONTAL_SCROLLBAR_Y_OFFSET;
+            int trackLength = horizontalTrackLength(divider);
+            int thumbLength = horizontalThumbLength(divider, trackLength);
+            int thumbX = trackX
+                    + scrollThumbOffset(
+                            horizontalScroll,
+                            maximumHorizontal,
+                            trackLength,
+                            thumbLength);
+            graphics.fill(
+                    trackX,
+                    trackY,
+                    trackX + trackLength,
+                    trackY + SCROLLBAR_SIZE,
+                    ComputedEditorTheme.BACKGROUND_TERTIARY);
+            graphics.fill(
+                    thumbX,
+                    trackY,
+                    thumbX + thumbLength,
+                    trackY + SCROLLBAR_SIZE,
+                    ComputedEditorTheme.BORDER_HIGHLIGHT);
+        }
+    }
+
+    private boolean beginScrollbarDrag(double mouseX, double mouseY, int divider) {
+        int maximumVertical = maximumVerticalScroll();
+        if (maximumVertical > 0) {
+            int trackX = divider - 9;
+            int trackTop = SOURCE_TOP + 2;
+            int trackLength = verticalTrackLength();
+            if (contains(mouseX, mouseY, trackX, trackTop, SCROLLBAR_SIZE, trackLength)) {
+                int thumbLength = verticalThumbLength(trackLength);
+                int thumbTop =
+                        trackTop + scrollThumbOffset(firstLine, maximumVertical, trackLength, thumbLength);
+                scrollbarDragOffset = contains(
+                                mouseX,
+                                mouseY,
+                                trackX,
+                                thumbTop,
+                                SCROLLBAR_SIZE,
+                                thumbLength)
+                        ? (int) mouseY - thumbTop
+                        : thumbLength / 2;
+                draggingVerticalScrollbar = true;
+                setVerticalScrollFromThumb((int) mouseY - scrollbarDragOffset);
+                return true;
+            }
+        }
+
+        int maximumHorizontal = maximumHorizontalScroll(divider);
+        if (maximumHorizontal > 0) {
+            int trackX = SOURCE_TEXT_X - 2;
+            int trackY = height - HORIZONTAL_SCROLLBAR_Y_OFFSET;
+            int trackLength = horizontalTrackLength(divider);
+            if (contains(mouseX, mouseY, trackX, trackY, trackLength, SCROLLBAR_SIZE)) {
+                int thumbLength = horizontalThumbLength(divider, trackLength);
+                int thumbX = trackX
+                        + scrollThumbOffset(
+                                horizontalScroll,
+                                maximumHorizontal,
+                                trackLength,
+                                thumbLength);
+                scrollbarDragOffset = contains(
+                                mouseX,
+                                mouseY,
+                                thumbX,
+                                trackY,
+                                thumbLength,
+                                SCROLLBAR_SIZE)
+                        ? (int) mouseX - thumbX
+                        : thumbLength / 2;
+                draggingHorizontalScrollbar = true;
+                setHorizontalScrollFromThumb((int) mouseX - scrollbarDragOffset, divider);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void setVerticalScrollFromThumb(int thumbTop) {
+        int maximum = maximumVerticalScroll();
+        int trackTop = SOURCE_TOP + 2;
+        int trackLength = verticalTrackLength();
+        int thumbLength = verticalThumbLength(trackLength);
+        firstLine = scrollFromThumb(thumbTop - trackTop, maximum, trackLength, thumbLength);
+    }
+
+    private void setHorizontalScrollFromThumb(int thumbX, int divider) {
+        int maximum = maximumHorizontalScroll(divider);
+        int trackX = SOURCE_TEXT_X - 2;
+        int trackLength = horizontalTrackLength(divider);
+        int thumbLength = horizontalThumbLength(divider, trackLength);
+        horizontalScroll = scrollFromThumb(thumbX - trackX, maximum, trackLength, thumbLength);
+    }
+
+    private int verticalTrackLength() {
+        return Math.max(SCROLLBAR_MIN_THUMB, height - SOURCE_BOTTOM_RESERVE - SOURCE_TOP - 2);
+    }
+
+    private static int horizontalTrackLength(int divider) {
+        return Math.max(SCROLLBAR_MIN_THUMB, divider - SOURCE_TEXT_X - 9);
+    }
+
+    private int verticalThumbLength(int trackLength) {
+        int totalLines = source.split("\n", -1).length;
+        return proportionalThumb(trackLength, visibleSourceLines(), totalLines);
+    }
+
+    private int horizontalThumbLength(int divider, int trackLength) {
+        int contentWidth = sourceViewportWidth(divider) + maximumHorizontalScroll(divider);
+        return proportionalThumb(trackLength, sourceViewportWidth(divider), contentWidth);
+    }
+
+    private static int proportionalThumb(int trackLength, int viewportSize, int contentSize) {
+        if (contentSize <= 0) {
+            return trackLength;
+        }
+        return Mth.clamp(
+                (int) Math.round((double) trackLength * viewportSize / contentSize),
+                Math.min(SCROLLBAR_MIN_THUMB, trackLength),
+                trackLength);
+    }
+
+    private static int scrollThumbOffset(
+            int scroll,
+            int maximumScroll,
+            int trackLength,
+            int thumbLength) {
+        int travel = trackLength - thumbLength;
+        if (maximumScroll <= 0 || travel <= 0) {
+            return 0;
+        }
+        return (int) Math.round((double) Mth.clamp(scroll, 0, maximumScroll)
+                * travel
+                / maximumScroll);
+    }
+
+    private static int scrollFromThumb(
+            int thumbOffset,
+            int maximumScroll,
+            int trackLength,
+            int thumbLength) {
+        int travel = trackLength - thumbLength;
+        if (maximumScroll <= 0 || travel <= 0) {
+            return 0;
+        }
+        return (int) Math.round((double) Mth.clamp(thumbOffset, 0, travel)
+                * maximumScroll
+                / travel);
     }
 
     private int columnAtPixel(String line, int targetPixel) {
@@ -766,7 +1049,7 @@ public final class LuaNodeEditorScreen extends Screen {
             return;
         }
         cursor = offsetAtLine(target, Math.min(column, lines[target].length()));
-        int visible = Math.max(1, (height - 62) / 11);
+        int visible = visibleSourceLines();
         firstLine = Mth.clamp(firstLine, Math.max(0, target - visible + 1), target);
     }
 
