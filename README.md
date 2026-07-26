@@ -18,10 +18,6 @@ Build and verify with:
 ./gradlew clean check build
 ```
 
-The `check` lifecycle verifies that the built JAR contains no `dev/devce/websnodelib/**` classes or
-`assets/websnodelib/**` resources.
-
-
 # Credits – Third-Party Code
 
 Computed now ships its own node engine, persistence model, runtime, and editor under the
