@@ -179,8 +179,7 @@ public final class WireEditorController {
         ensureSpatialIndex(graph, contentScale, editorRevision, geometryMoving, EditorDetailLevel.FULL);
 
         int queryRadius = Math.max(waypointPickRadius, curvePickRadius) + 3;
-        GraphRect pickArea = new GraphRect(
-                graphX - queryRadius, graphY - queryRadius, graphX + queryRadius, graphY + queryRadius);
+        GraphRect pickArea = GraphRect.around(new GraphPoint(graphX, graphY), queryRadius);
         List<UniformGridSpatialIndex.SpatialEntry<SpatialKey, IndexedSegment>> nearbySegments =
                 spatialIndex.query(pickArea);
         TreeSet<Integer> nearbyConnections = new TreeSet<>();

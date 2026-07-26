@@ -47,7 +47,7 @@ public class MonitorBlockEntityRenderer implements BlockEntityRenderer<MonitorBl
 
         int blocksW = be.getWidth();
         int blocksH = be.getHeight();
-        Direction facing = be.getDirection();
+        Direction facing = be.getFront();
         Direction right = be.getRight();
         Direction gridDown = be.getDown();
 

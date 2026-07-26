@@ -1,16 +1,11 @@
 package dev.propulsionteam.computed.network;
 
-import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
-import dev.propulsionteam.computed.internal.node.api.WGraph;
-import dev.propulsionteam.computed.internal.node.api.WNode;
 import dev.propulsionteam.computed.ComputerEditorBridge;
 import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
-import dev.propulsionteam.computed.customnodes.ComputedCustomNodes;
 import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
 import dev.propulsionteam.computed.content.monitors.widgets.SliderWidget;
 import dev.propulsionteam.computed.content.monitors.widgets.Widget;
-import dev.propulsionteam.computed.content.nodes.widgets.InteractiveWidgetNode;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
@@ -18,7 +13,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -27,7 +21,6 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import java.util.UUID;
 
 public final class ComputedNetworking {
-    private static final double MAX_EDIT_DISTANCE_SQ = 16.0 * 16.0;
     /** Pixels per monitor block; widget x/y/w/h are in this coordinate system. */
     public static final int SCREEN_PX_PER_BLOCK = 64;
     /** Monitor model/texture pixels reserved by the bezel on each outer screen edge. */
@@ -42,14 +35,6 @@ public final class ComputedNetworking {
 
     public static void register(IEventBus modBus) {
         modBus.addListener(ComputedNetworking::registerPayloads);
-        NeoForge.EVENT_BUS.addListener(ComputedNetworking::onPlayerLogin);
-    }
-
-    /** Push the server's data-driven node definitions to a joining player so their editor and graphs match the server. */
-    private static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) {
-            PacketDistributor.sendToPlayer(player, new SyncCustomNodesPayload(ComputedCustomNodes.readRawDefinitions()));
-        }
     }
 
     private static void registerPayloads(RegisterPayloadHandlersEvent event) {
@@ -70,14 +55,6 @@ public final class ComputedNetworking {
                 MonitorClickPayload.TYPE,
                 MonitorClickPayload.STREAM_CODEC,
                 ComputedNetworking::handleMonitorClick);
-        registrar.playToClient(
-                SyncCustomNodesPayload.TYPE,
-                SyncCustomNodesPayload.STREAM_CODEC,
-                ComputedNetworking::handleSyncCustomNodes);
-    }
-
-    private static void handleSyncCustomNodes(SyncCustomNodesPayload payload, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> ComputedCustomNodes.applyServerDefinitions(payload.definitions()));
     }
 
     public static OpenComputerEditorPayload openPayload(BlockPos pos, long serverRevision, CompoundTag graphTag) {
@@ -103,18 +80,18 @@ public final class ComputedNetworking {
                 return;
             }
             BlockPos pos = payload.pos();
-            if (player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_EDIT_DISTANCE_SQ) {
+            double distanceSquared = player.distanceToSqr(Vec3.atCenterOf(pos));
+            String accessError = ComputerEditPolicy.access(
+                    distanceSquared,
+                    player.mayBuild(),
+                    player.level().mayInteract(player, pos));
+            if (accessError != null) {
                 Computed.LOGGER.debug(
-                        "Rejected graph save from {} at {} (distance {:.2f} > {:.2f})",
+                        "Rejected graph save from {} at {} ({})",
                         player.getGameProfile().getName(),
                         pos,
-                        Math.sqrt(player.distanceToSqr(Vec3.atCenterOf(pos))),
-                        Math.sqrt(MAX_EDIT_DISTANCE_SQ));
-                rejectGraphSave(player, payload, -1L, "computer is too far away");
-                return;
-            }
-            if (!player.mayBuild() || !player.level().mayInteract(player, pos)) {
-                rejectGraphSave(player, payload, -1L, "you do not have permission to edit this computer");
+                        accessError);
+                rejectGraphSave(player, payload, -1L, accessError);
                 return;
             }
             BlockEntity be = player.level().getBlockEntity(pos);
@@ -161,7 +138,7 @@ public final class ComputedNetworking {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
             BlockPos originPos = payload.originPos();
-            if (player.distanceToSqr(Vec3.atCenterOf(originPos)) > MAX_EDIT_DISTANCE_SQ) return;
+            if (player.distanceToSqr(Vec3.atCenterOf(originPos)) > ComputerEditPolicy.MAX_DISTANCE_SQ) return;
             BlockEntity be = player.level().getBlockEntity(originPos);
             if (!(be instanceof MonitorBlockEntity origin)) return;
             BlockPos ownerPos = origin.getOwnerComputerPos();
@@ -176,26 +153,12 @@ public final class ComputedNetworking {
 
             for (Widget w : origin.getDrawList().widgets()) {
                 if (px < w.x() || px >= w.x() + w.w() || py < w.y() || py >= w.y() + w.h()) continue;
-                WNode node = findNodeById(computer.getGraph(), w.id());
-                if (!(node instanceof InteractiveWidgetNode interactive)) continue;
                 double value = 1.0;
                 if (w instanceof SliderWidget) {
                     value = w.w() <= 0 ? 0.0 : (double) (px - w.x()) / (double) w.w();
                 }
-                interactive.onWidgetInput(value);
-                return;
+                if (computer.handleWidgetInput(w.id(), value)) return;
             }
         });
-    }
-
-    private static WNode findNodeById(WGraph g, UUID id) {
-        for (WNode n : g.getNodes()) {
-            if (n.getId().equals(id)) return n;
-            if (n instanceof FunctionCardNode fc) {
-                WNode hit = findNodeById(fc.getInnerGraph(), id);
-                if (hit != null) return hit;
-            }
-        }
-        return null;
     }
 }

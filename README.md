@@ -1,25 +1,22 @@
 # Computed
 
-Computed is a NeoForge 1.21.1 programmable node-graph mod. Its node API, persisted program format,
-runtime, and editor live entirely under Computed-owned Java and resource namespaces, avoiding the
-split-package conflict caused by the formerly vendored Web's Node Lib.
+Computed is a NeoForge 1.21.1 programmable Lua node-graph mod. LuaJ powers one sandboxed VM per
+computer while Computed owns graph scheduling, safe Minecraft endpoints, persistence, networking,
+the editor, monitor rendering, and integrations.
 
-Legacy worlds and imports are migrated on load and written as version-2 `ComputedProgram` data after
-the next successful save. Share exports use `CMP2`; `CMP1` and legacy Base64/SNBT remain import-only.
+Program format 3 stores one root graph and an embedded Lua definition library. Legacy graphs,
+Functions, Sections, JSON custom nodes, CMP1, and CMP2 are intentionally discarded or rejected
+without migration.
 
-Addon authors: see the [public node API](docs/node-api.md), the
-[Web's Node Lib migration guide](docs/node-migration.md), and the
-[example addon](docs/example-addon/README.md).
+Start with the [Lua authoring guide](docs/lua/authoring-guide.md), the
+[Lua method reference](docs/lua/lua-api-reference.md), and the
+[Java endpoint API](docs/lua/endpoint-api.md).
 
 Build and verify with:
 
 ```text
 ./gradlew clean check build
 ```
-
-The `check` lifecycle verifies that the built JAR contains no `dev/devce/websnodelib/**` classes or
-`assets/websnodelib/**` resources.
-
 
 # Credits – Third-Party Code
 

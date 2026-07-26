@@ -1,32 +1,48 @@
 package dev.propulsionteam.computed.content.blocks;
 
-import dev.propulsionteam.computed.internal.node.api.FunctionCardNode;
-import dev.propulsionteam.computed.internal.node.api.FunctionDefinitionStore;
-import dev.propulsionteam.computed.internal.node.api.WGraph;
-import dev.propulsionteam.computed.internal.node.api.WNode;
-import dev.propulsionteam.computed.internal.node.api.WPin;
-import dev.propulsionteam.computed.internal.node.api.NodeRegistry;
-import dev.propulsionteam.computed.internal.node.MissingNode;
-import dev.propulsionteam.computed.internal.node.ProgramBridge;
-import dev.propulsionteam.computed.node.program.ComputedProgram;
-import dev.propulsionteam.computed.node.program.ProgramCodec;
+import dev.propulsionteam.computed.Computed;
 import dev.propulsionteam.computed.content.ComputedRegistries;
 import dev.propulsionteam.computed.content.Peripherals;
-import dev.propulsionteam.computed.content.blocks.ComputedGraphExecution;
-import dev.propulsionteam.computed.content.nodes.vanilla.RedstonePortNode;
-import dev.propulsionteam.computed.integration.CreateRedstoneLinkBridge;
+import dev.propulsionteam.computed.content.monitors.MonitorBlockEntity;
+import dev.propulsionteam.computed.content.monitors.widgets.ButtonWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.ClockWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.LayoutManagedWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.MonitorWidgetLayout;
+import dev.propulsionteam.computed.content.monitors.widgets.ProgressBarWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.SliderWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.TextAlignment;
+import dev.propulsionteam.computed.content.monitors.widgets.TextWidget;
+import dev.propulsionteam.computed.content.monitors.widgets.Widget;
+import dev.propulsionteam.computed.content.monitors.widgets.WidgetDrawList;
+import dev.propulsionteam.computed.graph.ComputedProgramV3;
+import dev.propulsionteam.computed.graph.GraphNode;
+import dev.propulsionteam.computed.graph.LuaGraphScheduler;
+import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
+import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
-import net.minecraft.core.registries.BuiltInRegistries;
+import dev.propulsionteam.computed.network.ComputerEditPolicy;
+import dev.propulsionteam.computed.network.ComputedNetworking;
+import dev.propulsionteam.computed.persistence.ProgramV3Codec;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -34,139 +50,43 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
-import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import net.minecraft.nbt.NbtIo;
-
-public class ComputerBlockEntity extends BaseContainerBlockEntity {
+public class ComputerBlockEntity extends BaseContainerBlockEntity implements BuiltinEndpointHost {
     public static final int CONTAINER_SIZE = 9;
-    private static final int MAX_PROGRAM_NODES = 4096;
-    private static final int MAX_PROGRAM_CONNECTIONS = 20_000;
-    private static final int MAX_PROGRAM_FUNCTIONS = 256;
-    private static final int MAX_NESTED_GRAPH_DEPTH = 16;
-    private static final int MAX_PROGRAM_BYTES = 4 * 1024 * 1024;
+    public static final String PROGRAM_TAG = "ComputedProgram";
 
     private final NonNullList<ItemStack> items = NonNullList.withSize(CONTAINER_SIZE, ItemStack.EMPTY);
-    private WGraph graph = new WGraph();
-    /** Saved function bodies keyed by id (parallel to graph function cards). */
-    private FunctionDefinitionStore functionDefinitions = new FunctionDefinitionStore();
-    /** Weak redstone emitted toward each {@link Direction} (neighbor on that side sees this level). */
-    private final int[] redstoneEmitted = new int[6];
-    private final CreateRedstoneLinkBridge createRedstoneLinks = new CreateRedstoneLinkBridge();
+    private ComputedProgramV3 program;
+    private LuaGraphScheduler scheduler;
+    private CompoundTag unreadableProgramData;
     private UUID computerUuid;
     private long programRevision;
-    /** Canonical v2 source retained so unsupported addon data survives the transitional runtime. */
-    private ComputedProgram persistedProgram;
-    /**
-     * Program fields that could not be decoded (for example, a newer format version). They are
-     * written back verbatim until an explicitly validated editor save replaces them.
-     */
-    private CompoundTag unreadableProgramData;
     private transient boolean dropsHandled;
+    private final int[] emittedRedstone = new int[Direction.values().length];
 
     public ComputerBlockEntity(BlockPos pos, BlockState state) {
         super(ComputedRegistries.COMPUTER_BLOCK_ENTITY.get(), pos, state);
+        program = ComputedProgramV3.empty(stableGraphId(pos));
     }
 
-    /**
-     * Runs the node graph on the server world thread at 20 TPS. Evaluators are not safe for arbitrary
-     * background threads without a numeric snapshot pipeline, so stepping stays synchronous here.
-     */
-    public static void tick(Level level, BlockPos pos, BlockState state, ComputerBlockEntity be) {
-        if (level.isClientSide) {
+    public static void tick(Level level, BlockPos pos, BlockState state, ComputerBlockEntity computer) {
+        if (level.isClientSide || computer.isRemoved()) {
             return;
         }
-        // Sable's sub-level tick dispatcher doesn't drop removed BEs from its ticker list the way
-        // vanilla chunks do, so the graph would keep executing after the computer is broken.
-        if (be.isRemoved()) {
-            return;
+        LuaGraphScheduler active = computer.ensureScheduler();
+        ComputedProgramV3 before = computer.program;
+        active.tick(false);
+        ComputedProgramV3 after = active.snapshot(computer.programRevision);
+        computer.program = after;
+        if (!before.persistentState().equals(after.persistentState())) {
+            computer.setChanged();
         }
-        Level lvl = be.getLevel();
-        if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
-            be.createRedstoneLinks.ensureSynced(lvl, be, be.graph);
-        }
-        ComputedGraphExecution.withHost(be, () -> be.graph.advanceSimulationInWorld(1.0 / WGraph.MAX_TICK_RATE));
-        if (CreateRedstoneLinkBridge.isCreateLoaded() && lvl != null && !lvl.isClientSide) {
-            be.createRedstoneLinks.pushTransmitters(lvl);
-        }
-        be.mutePeripheralsWithoutHardware(be.graph);
-        be.refreshRedstoneFromGraph();
     }
 
-    /**
-     * Returns the weak signal emitted from the given face of the computer. Minecraft's
-     * {@code getSignal(..., direction)} passes {@code direction} as the direction from the querying
-     * neighbor toward this block, so the face being queried is its opposite.
-     */
     public int getEmittedRedstone(Direction fromNeighborTowardSelf) {
-        return redstoneEmitted[fromNeighborTowardSelf.getOpposite().ordinal()];
-    }
-
-    /** Zeros outputs for peripheral nodes with no matching item in this computer (including nested function graphs). */
-    private void mutePeripheralsWithoutHardware(WGraph g) {
-        for (WNode n : g.getNodes()) {
-            if (n instanceof FunctionCardNode fc) {
-                mutePeripheralsWithoutHardware(fc.getInnerGraph());
-            }
-            if (Peripherals.isPeripheralNodeType(n.getTypeId()) && !hasPeripheralEquipped(n.getTypeId())) {
-                for (var out : n.getOutputs()) {
-                    out.setValue(0.0);
-                }
-            }
-        }
-    }
-
-    private void refreshRedstoneFromGraph() {
-        Level lvl = this.level;
-        if (lvl == null || lvl.isClientSide) {
-            return;
-        }
-        int[] next = new int[6];
-        List<RedstonePortNode> ports = new ArrayList<>();
-        collectRedstonePorts(graph, ports);
-        BlockState st = getBlockState();
-        Direction facing = st.getValue(ComputerBlock.FACING);
-        for (RedstonePortNode rp : ports) {
-            if (!hasPeripheralEquipped(RedstonePortNode.TYPE_ID)) {
-                continue;
-            }
-            WNode n = rp;
-            if (n.getInputs().size() < 2) {
-                continue;
-            }
-            double tick = n.getInputs().get(0).getValue();
-            double lv = n.getInputs().get(1).getValue();
-            if (tick > 0.5) {
-                int p = net.minecraft.util.Mth.clamp((int) Math.round(lv), 0, 15);
-                int o = rp.getEmitFace().toWorld(facing).ordinal();
-                next[o] = Math.max(next[o], p);
-            }
-        }
-        if (!Arrays.equals(next, redstoneEmitted)) {
-            System.arraycopy(next, 0, redstoneEmitted, 0, 6);
-            setChanged();
-            lvl.updateNeighborsAt(worldPosition, st.getBlock());
-            for (Direction d : Direction.values()) {
-                lvl.neighborChanged(worldPosition.relative(d), st.getBlock(), worldPosition);
-            }
-        }
-    }
-
-    private static void collectRedstonePorts(WGraph g, List<RedstonePortNode> out) {
-        for (WNode n : g.getNodes()) {
-            if (n instanceof RedstonePortNode rp) {
-                out.add(rp);
-            } else if (n instanceof FunctionCardNode fc) {
-                collectRedstonePorts(fc.getInnerGraph(), out);
-            }
-        }
+        return emittedRedstone[fromNeighborTowardSelf.getOpposite().ordinal()];
     }
 
     @Override
@@ -187,31 +107,40 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     @Override
     protected void setItems(NonNullList<ItemStack> newItems) {
         items.clear();
-        for (int i = 0; i < Math.min(newItems.size(), items.size()); i++) {
-            items.set(i, newItems.get(i));
+        for (int index = 0; index < Math.min(newItems.size(), items.size()); index++) {
+            items.set(index, newItems.get(index));
         }
     }
 
     @Override
     protected AbstractContainerMenu createMenu(int containerId, Inventory playerInventory) {
-        return new ComputerPeripheralMenu(ComputedRegistries.COMPUTER_PERIPHERAL_MENU.get(), containerId, playerInventory, this);
-    }
-
-    @Override
-    public void setItem(int slot, ItemStack stack) {
-        super.setItem(slot, stack);
-    }
-
-    public WGraph getGraph() {
-        return graph;
+        return new ComputerPeripheralMenu(
+                ComputedRegistries.COMPUTER_PERIPHERAL_MENU.get(),
+                containerId,
+                playerInventory,
+                this);
     }
 
     public CompoundTag getGraphData() {
-        return ProgramBridge.writeEnvelope(snapshotProgram());
+        CompoundTag envelope = new CompoundTag();
+        envelope.put(PROGRAM_TAG, ProgramV3Codec.encode(snapshotProgram()));
+        Peripherals.writePeripheralUnlockTag(this, envelope);
+        return envelope;
+    }
+
+    public ComputedProgramV3 getProgram() {
+        return snapshotProgram();
     }
 
     public long getProgramRevision() {
         return programRevision;
+    }
+
+    public boolean handleWidgetInput(UUID nodeId, double value) {
+        return ensureScheduler().eventNode(
+                nodeId,
+                "input",
+                org.luaj.vm2.LuaValue.valueOf(value));
     }
 
     public record ApplyGraphResult(boolean accepted, long serverRevision, String message) {
@@ -224,118 +153,88 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         }
     }
 
-    /** Validates into temporary objects and swaps them only when the complete program is valid. */
     public ApplyGraphResult applyGraphFromNetwork(CompoundTag tag, long expectedRevision) {
-        if (expectedRevision != programRevision) {
-            return ApplyGraphResult.rejected(
-                    programRevision,
-                    "stale editor revision (expected " + programRevision + ", received " + expectedRevision + ")");
+        String revisionError = ComputerEditPolicy.revision(programRevision, expectedRevision);
+        if (revisionError != null) {
+            return ApplyGraphResult.rejected(programRevision, revisionError);
         }
         String sizeError = validateEncodedSize(tag);
         if (sizeError != null) {
             return ApplyGraphResult.rejected(programRevision, sizeError);
         }
-        CompoundTag copy = tag.copy();
-        Peripherals.stripEditorOnlyTags(copy);
-        java.util.Map<UUID, PinSnapshot[]> inputSnap = new java.util.HashMap<>();
-        java.util.Map<UUID, PinSnapshot[]> outputSnap = new java.util.HashMap<>();
-        snapshotPinValues(graph, inputSnap, outputSnap);
-        ComputedProgram liveProgram = snapshotProgram();
-        ProgramBridge.RuntimeProgram decoded;
+        ComputedProgramV3 incoming;
         try {
-            decoded = ProgramBridge.decode(copy);
+            ProgramV3Codec.LoadResult decoded =
+                    ProgramV3Codec.decode(tag, worldPosition.toShortString(), ignored -> {});
+            if (decoded.discardedLegacy()) {
+                return ApplyGraphResult.rejected(programRevision, "legacy graph and clipboard formats are not accepted");
+            }
+            incoming = decoded.program();
         } catch (RuntimeException exception) {
-            return ApplyGraphResult.rejected(programRevision, "program could not be decoded: " + exception.getMessage());
+            return ApplyGraphResult.rejected(
+                    programRevision,
+                    "program could not be decoded: " + exception.getMessage());
         }
-        String validationError = validateProgram(decoded.program());
+        String validationError = validateProgram(incoming);
         if (validationError != null) {
             return ApplyGraphResult.rejected(programRevision, validationError);
         }
-        ComputedProgram stateMerged = ProgramBridge.preserveRuntimeState(decoded.program(), liveProgram);
-        ProgramBridge.RuntimeProgram stateDecoded;
+        ComputedProgramV3 stateMerged = preserveRuntimeState(incoming, snapshotProgram());
+        LuaGraphScheduler nextScheduler;
         try {
-            stateDecoded = ProgramBridge.decode(ProgramBridge.writeEnvelope(stateMerged));
+            nextScheduler = new LuaGraphScheduler(stateMerged, getOrCreateUuid(), this);
+            var error = nextScheduler.validationDiagnostics().stream()
+                    .filter(diagnostic -> diagnostic.severity()
+                            == dev.propulsionteam.computed.diagnostics.ComputedDiagnostic.Severity.ERROR)
+                    .findFirst();
+            if (error.isPresent()) {
+                nextScheduler.unload();
+                return ApplyGraphResult.rejected(
+                        programRevision,
+                        "program validation failed: " + error.get().message());
+            }
         } catch (RuntimeException exception) {
             return ApplyGraphResult.rejected(
-                    programRevision, "program could not preserve authoritative runtime state: " + exception.getMessage());
+                    programRevision,
+                    "program validation failed: " + exception.getMessage());
         }
-        WGraph nextGraph = stateDecoded.graph();
-        FunctionDefinitionStore nextFunctions = stateDecoded.functions();
-        restorePinValues(nextGraph, inputSnap, outputSnap);
-        graph = nextGraph;
-        functionDefinitions = nextFunctions;
+        if (scheduler != null) {
+            scheduler.unload();
+        }
         programRevision++;
-        persistedProgram = stateDecoded.program().withRevision(programRevision);
+        program = stateMerged.withRevision(programRevision);
+        scheduler = nextScheduler;
         unreadableProgramData = null;
-        createRedstoneLinks.markGraphDirty();
         setChanged();
         return ApplyGraphResult.accepted(programRevision);
     }
 
-    private String validateProgram(ComputedProgram program) {
-        if (program.functions().size() > MAX_PROGRAM_FUNCTIONS) {
-            return "program exceeds the function limit of " + MAX_PROGRAM_FUNCTIONS;
-        }
-        long modelNodes = program.rootGraph().nodes().size();
-        long modelConnections = program.rootGraph().connections().size();
-        for (var function : program.functions()) {
-            modelNodes += function.graph().nodes().size();
-            modelConnections += function.graph().connections().size();
-        }
-        if (modelNodes > MAX_PROGRAM_NODES) {
-            return "program exceeds the node limit of " + MAX_PROGRAM_NODES;
-        }
-        if (modelConnections > MAX_PROGRAM_CONNECTIONS) {
-            return "program exceeds the connection limit of " + MAX_PROGRAM_CONNECTIONS;
-        }
-        CompoundTag legacyBundle = ProgramCodec.toLegacyBundleTag(program);
-        String structuralError = validateProgramTag(legacyBundle);
-        if (structuralError != null) return structuralError;
-
-        var incomingAnalyses = ProgramBridge.analyzeAll(program);
-        var previousAnalyses = persistedProgram == null ? List.<ProgramBridge.AnalyzedGraph>of() : ProgramBridge.analyzeAll(persistedProgram);
-        java.util.Set<GraphCycleKey> existingCycles = new java.util.HashSet<>();
-        for (var analyzedGraph : previousAnalyses) {
-            for (List<UUID> cycle : analyzedGraph.analysis().combinationalCycles()) {
-                existingCycles.add(new GraphCycleKey(analyzedGraph.graphId(), java.util.Set.copyOf(cycle)));
-            }
-        }
-        for (var analyzedGraph : incomingAnalyses) {
-            for (List<UUID> cycle : analyzedGraph.analysis().combinationalCycles()) {
-                if (!existingCycles.contains(new GraphCycleKey(analyzedGraph.graphId(), java.util.Set.copyOf(cycle)))) {
-                    return "program introduces a new combinational cycle in graph " + analyzedGraph.graphId();
-                }
-            }
-        }
-        java.util.Set<String> existingStructuralDiagnostics = new java.util.HashSet<>();
-        for (var analyzedGraph : previousAnalyses) {
-            for (var diagnostic : analyzedGraph.analysis().diagnostics()) {
-                existingStructuralDiagnostics.add(structuralDiagnosticKey(diagnostic));
-            }
-        }
-        for (var analyzedGraph : incomingAnalyses) {
-            for (var diagnostic : analyzedGraph.analysis().diagnostics()) {
-                if (diagnostic.severity()
-                                != dev.propulsionteam.computed.node.program.ProgramDiagnostic.Severity.ERROR
-                        || "placeholder_node_disabled".equals(diagnostic.code())
-                        || "combinational_cycle".equals(diagnostic.code())
-                        || "combinational_self_loop".equals(diagnostic.code())) {
-                    continue;
-                }
-                if (!existingStructuralDiagnostics.contains(structuralDiagnosticKey(diagnostic))) {
-                    return "program validation failed in graph " + analyzedGraph.graphId() + ": " + diagnostic.message();
-                }
-            }
-        }
-        return null;
+    private String validateProgram(ComputedProgramV3 candidate) {
+        return ComputerEditPolicy.programShape(candidate);
     }
 
-    private record GraphCycleKey(UUID graphId, java.util.Set<UUID> nodeIds) {}
-
-    private static String structuralDiagnosticKey(
-            dev.propulsionteam.computed.node.program.ProgramDiagnostic diagnostic) {
-        return diagnostic.code() + "|" + diagnostic.graphId() + "|" + diagnostic.nodeId() + "|"
-                + diagnostic.connectionId();
+    private static ComputedProgramV3 preserveRuntimeState(
+            ComputedProgramV3 incoming,
+            ComputedProgramV3 authoritative) {
+        Map<UUID, GraphNode> currentNodes = new LinkedHashMap<>();
+        authoritative.rootGraph().nodes().forEach(node -> currentNodes.put(node.id(), node));
+        Map<UUID, CompoundTag> merged = new LinkedHashMap<>(incoming.persistentState());
+        incoming.rootGraph().nodes().forEach(node -> {
+            GraphNode current = currentNodes.get(node.id());
+            CompoundTag state = authoritative.persistentState().get(node.id());
+            if (current != null
+                    && state != null
+                    && current.definitionId().equals(node.definitionId())
+                    && current.definitionHash().equals(node.definitionHash())) {
+                merged.put(node.id(), state);
+            }
+        });
+        return new ComputedProgramV3(
+                incoming.revision(),
+                incoming.rootGraph(),
+                incoming.library(),
+                merged,
+                incoming.metadata());
     }
 
     private static String validateEncodedSize(CompoundTag tag) {
@@ -344,152 +243,20 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
             try (DataOutputStream output = new DataOutputStream(bytes)) {
                 NbtIo.write(tag, output);
             }
-            return bytes.size() > MAX_PROGRAM_BYTES
-                    ? "program exceeds the encoded size limit of " + MAX_PROGRAM_BYTES + " bytes"
-                    : null;
+            return ComputerEditPolicy.encodedSize(bytes.size());
         } catch (IOException | RuntimeException exception) {
-            return "program NBT could not be measured safely";
+            return ComputerEditPolicy.encodedSize(-1);
         }
     }
 
-    private static String validateProgramTag(CompoundTag bundle) {
-        CompoundTag graphTag = bundle.contains("ComputerGraph", Tag.TAG_COMPOUND)
-                ? bundle.getCompound("ComputerGraph")
-                : bundle;
-        int[] totals = new int[2];
-        String graphError = validateGraphTag(graphTag, 0, totals);
-        if (graphError != null) {
-            return graphError;
-        }
-        ListTag functions = bundle.getList("ComputerFunctions", Tag.TAG_COMPOUND);
-        if (functions.size() > MAX_PROGRAM_FUNCTIONS) {
-            return "program exceeds the function limit of " + MAX_PROGRAM_FUNCTIONS;
-        }
-        for (int i = 0; i < functions.size(); i++) {
-            String error = validateGraphTag(functions.getCompound(i).getCompound("Body"), 1, totals);
-            if (error != null) {
-                return "function " + i + ": " + error;
-            }
-        }
-        return null;
-    }
-
-    private static String validateGraphTag(CompoundTag graphTag, int depth, int[] totals) {
-        if (depth > MAX_NESTED_GRAPH_DEPTH) {
-            return "nested functions exceed depth " + MAX_NESTED_GRAPH_DEPTH;
-        }
-        ListTag nodes = graphTag.getList("nodes", Tag.TAG_COMPOUND);
-        ListTag connections = graphTag.getList("conns", Tag.TAG_COMPOUND);
-        totals[0] += nodes.size();
-        totals[1] += connections.size();
-        if (totals[0] > MAX_PROGRAM_NODES) {
-            return "program exceeds the node limit of " + MAX_PROGRAM_NODES;
-        }
-        if (totals[1] > MAX_PROGRAM_CONNECTIONS) {
-            return "program exceeds the connection limit of " + MAX_PROGRAM_CONNECTIONS;
-        }
-        for (int i = 0; i < nodes.size(); i++) {
-            CompoundTag node = nodes.getCompound(i);
-            try {
-                ResourceLocation type = ResourceLocation.parse(node.getString("typeId"));
-                if (!NodeRegistry.isRegistered(type) && !node.getBoolean(MissingNode.MISSING_MARKER)) {
-                    return "unknown node type " + type;
-                }
-            } catch (RuntimeException exception) {
-                return "node " + i + " has an invalid type ID";
-            }
-            if (node.contains("inner", Tag.TAG_COMPOUND)) {
-                String error = validateGraphTag(node.getCompound("inner"), depth + 1, totals);
-                if (error != null) {
-                    return error;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static void snapshotPinValues(WGraph g,
-                                          java.util.Map<UUID, PinSnapshot[]> ins,
-                                          java.util.Map<UUID, PinSnapshot[]> outs) {
-        for (WNode n : g.getNodes()) {
-            PinSnapshot[] in = new PinSnapshot[n.getInputs().size()];
-            for (int i = 0; i < in.length; i++) in[i] = PinSnapshot.capture(n.getInputs().get(i));
-            PinSnapshot[] out = new PinSnapshot[n.getOutputs().size()];
-            for (int i = 0; i < out.length; i++) out[i] = PinSnapshot.capture(n.getOutputs().get(i));
-            ins.put(n.getId(), in);
-            outs.put(n.getId(), out);
-            if (n instanceof FunctionCardNode fc) {
-                snapshotPinValues(fc.getInnerGraph(), ins, outs);
-            }
-        }
-    }
-
-    private static void restorePinValues(WGraph g,
-                                         java.util.Map<UUID, PinSnapshot[]> ins,
-                                         java.util.Map<UUID, PinSnapshot[]> outs) {
-        for (WNode n : g.getNodes()) {
-            PinSnapshot[] in = ins.get(n.getId());
-            if (in != null) {
-                restorePins(n.getInputs(), in);
-            }
-            PinSnapshot[] out = outs.get(n.getId());
-            if (out != null) {
-                restorePins(n.getOutputs(), out);
-            }
-            if (n instanceof FunctionCardNode fc) {
-                restorePinValues(fc.getInnerGraph(), ins, outs);
-            }
-        }
-    }
-
-    private static void restorePins(List<WPin> pins, PinSnapshot[] snapshots) {
-        java.util.Map<String, PinSnapshot> byStableKey = new java.util.HashMap<>();
-        for (PinSnapshot snapshot : snapshots) {
-            if (snapshot.stableKey() != null) byStableKey.putIfAbsent(snapshot.stableKey(), snapshot);
-        }
-        for (int i = 0; i < pins.size(); i++) {
-            WPin pin = pins.get(i);
-            PinSnapshot snapshot = pin.getStableKey() == null
-                    ? (i < snapshots.length ? snapshots[i] : null)
-                    : byStableKey.get(pin.getStableKey());
-            if (snapshot != null) snapshot.restoreTo(pin);
-        }
-    }
-
-    private record PinSnapshot(
-            String stableKey, WPin.DataType type, double numberValue, String stringValue, Object widgetValue) {
-        static PinSnapshot capture(WPin pin) {
-            return new PinSnapshot(
-                    pin.getStableKey(), pin.getDataType(), pin.getValue(), pin.getStringValue(), pin.getWidgetValue());
-        }
-
-        void restoreTo(WPin pin) {
-            if (pin.getDataType() != type) {
-                return;
-            }
-            switch (type) {
-                case NUMBER -> pin.setValue(numberValue);
-                case STRING -> pin.setStringValue(stringValue);
-                case WIDGET -> pin.setWidgetValue(widgetValue);
-            }
-        }
-    }
-
-    private void hydrateFunctionCardsFromLibrary() {
-        FunctionCardNode.applyLibraryToInnerGraphs(graph, functionDefinitions);
-    }
-
-    /**
-     * Shift-use: place one peripheral into the first valid empty slot (unique types only).
-     */
     public boolean tryInsertPeripheralFromHand(ItemStack stack) {
         if (!Peripherals.isPeripheral(stack)) {
             return false;
         }
         ItemStack one = stack.split(1);
-        for (int i = 0; i < CONTAINER_SIZE; i++) {
-            if (getItem(i).isEmpty() && Peripherals.mayPlaceInComputer(this, i, one)) {
-                setItem(i, one);
+        for (int index = 0; index < CONTAINER_SIZE; index++) {
+            if (getItem(index).isEmpty() && Peripherals.mayPlaceInComputer(this, index, one)) {
+                setItem(index, one);
                 return true;
             }
         }
@@ -497,8 +264,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         return false;
     }
 
-    /** Always returns true: there are no hardware-gated nodes after the peripheral simplification. */
-    public boolean hasPeripheralEquipped(ResourceLocation nodeTypeId) {
+    public boolean hasPeripheralEquipped(net.minecraft.resources.ResourceLocation nodeTypeId) {
         return true;
     }
 
@@ -508,7 +274,6 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         ContainerHelper.loadAllItems(tag, items, registries);
         computerUuid = tag.hasUUID("ComputerUUID") ? tag.getUUID("ComputerUUID") : null;
         loadProgramData(tag);
-        createRedstoneLinks.markGraphDirty();
     }
 
     @Override
@@ -530,13 +295,13 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
     }
 
     public boolean hasStoredState() {
-        if (unreadableProgramData != null && !unreadableProgramData.isEmpty()) return true;
-        if (!graph.getNodes().isEmpty()) return true;
-        if (!functionDefinitions.isEmpty()) return true;
-        for (ItemStack s : items) {
-            if (!s.isEmpty()) return true;
+        if (unreadableProgramData != null && !unreadableProgramData.isEmpty()) {
+            return true;
         }
-        return false;
+        if (!program.rootGraph().nodes().isEmpty() || !program.library().isEmpty()) {
+            return true;
+        }
+        return items.stream().anyMatch(stack -> !stack.isEmpty());
     }
 
     public void markDropsHandled() {
@@ -549,9 +314,9 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
 
     @Override
     public void setRemoved() {
-        Level lvl = this.level;
-        if (lvl != null && !lvl.isClientSide) {
-            createRedstoneLinks.clear(lvl);
+        if (scheduler != null) {
+            scheduler.unload();
+            scheduler = null;
         }
         super.setRemoved();
     }
@@ -569,88 +334,335 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity {
         loadProgramData(tag);
     }
 
-    private ComputedProgram snapshotProgram() {
-        ComputedProgram snapshot = ProgramBridge.snapshot(graph, functionDefinitions, programRevision);
-        persistedProgram = ProgramBridge.reconcile(persistedProgram, snapshot).withRevision(programRevision);
-        return persistedProgram;
+    @Override
+    public double worldTime() {
+        return level == null ? 0 : level.getDayTime();
+    }
+
+    @Override
+    public double[] position() {
+        Vec3 position = Vec3.atCenterOf(worldPosition);
+        return new double[] {position.x, position.y, position.z};
+    }
+
+    @Override
+    public double[] rotation() {
+        Direction facing = getBlockState().hasProperty(ComputerBlock.FACING)
+                ? getBlockState().getValue(ComputerBlock.FACING)
+                : Direction.NORTH;
+        return new double[] {facing.toYRot(), 0, 0};
+    }
+
+    @Override
+    public int redstoneInput(String face) {
+        Direction worldFace = worldFace(face);
+        if (worldFace == null || level == null || level.isClientSide) {
+            return 0;
+        }
+        BlockPos neighbor = worldPosition.relative(worldFace);
+        return level.getSignal(neighbor, worldFace);
+    }
+
+    @Override
+    public int comparatorInput(String face) {
+        Direction worldFace = worldFace(face);
+        if (worldFace == null || level == null || level.isClientSide) {
+            return 0;
+        }
+        BlockPos neighbor = worldPosition.relative(worldFace);
+        BlockState target = level.getBlockState(neighbor);
+        return target.hasAnalogOutputSignal()
+                ? target.getAnalogOutputSignal(level, neighbor)
+                : level.getSignal(neighbor, worldFace);
+    }
+
+    @Override
+    public boolean blockPresent(String face) {
+        Direction worldFace = worldFace(face);
+        return worldFace != null
+                && level != null
+                && !level.isClientSide
+                && !level.getBlockState(worldPosition.relative(worldFace)).isAir();
+    }
+
+    @Override
+    public void redstoneOutput(String face, int power) {
+        Direction worldFace = worldFace(face);
+        if (worldFace == null || level == null || level.isClientSide) {
+            return;
+        }
+        int clamped = net.minecraft.util.Mth.clamp(power, 0, 15);
+        if (emittedRedstone[worldFace.ordinal()] == clamped) {
+            return;
+        }
+        emittedRedstone[worldFace.ordinal()] = clamped;
+        level.updateNeighborsAt(worldPosition, getBlockState().getBlock());
+    }
+
+    @Override
+    public void showWidgets(String target, List<BuiltinWidget> definitions) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        MinecraftServer server = level.getServer();
+        if (server != null && !server.isSameThread()) {
+            String queuedTarget = target;
+            List<BuiltinWidget> queuedDefinitions = List.copyOf(definitions);
+            server.execute(() -> applyWidgets(queuedTarget, queuedDefinitions));
+            return;
+        }
+        applyWidgets(target, definitions);
+    }
+
+    private void applyWidgets(String target, List<BuiltinWidget> definitions) {
+        Direction direction = worldFace(target);
+        if (direction == null || level == null || level.isClientSide) {
+            return;
+        }
+        BlockPos targetPos = worldPosition.relative(direction);
+        var targetEntity = level.getBlockEntity(targetPos);
+        if (!(targetEntity instanceof MonitorBlockEntity monitor)) {
+            return;
+        }
+        MonitorBlockEntity origin = monitor.findOrigin();
+        if (origin == null) {
+            return;
+        }
+        List<Widget> widgets = definitions.stream()
+                .map(ComputerBlockEntity::toWidget)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        int screenWidth = origin.getWidth() * ComputedNetworking.SCREEN_PX_PER_BLOCK;
+        int screenHeight = origin.getHeight() * ComputedNetworking.SCREEN_PX_PER_BLOCK;
+        widgets = MonitorWidgetLayout.resolve(widgets, screenWidth, screenHeight);
+        origin.bindOwner(worldPosition);
+        origin.setDrawList(new WidgetDrawList(widgets));
+    }
+
+    @Override
+    public void runCommand(String commandText) {
+        if (commandText == null
+                || commandText.isBlank()
+                || !(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        MinecraftServer server = serverLevel.getServer();
+        String command = commandText.startsWith("/") ? commandText.substring(1) : commandText;
+        if (server == null || command.isBlank()) {
+            return;
+        }
+        Vec3 center = Vec3.atCenterOf(worldPosition);
+        CommandSourceStack source = server.createCommandSourceStack()
+                .withLevel(serverLevel)
+                .withPosition(center)
+                .withPermission(4)
+                .withSuppressedOutput();
+        server.getCommands().performPrefixedCommand(source, command);
+    }
+
+    private LuaGraphScheduler ensureScheduler() {
+        if (scheduler == null) {
+            scheduler = new LuaGraphScheduler(program, getOrCreateUuid(), this);
+        }
+        return scheduler;
+    }
+
+    private ComputedProgramV3 snapshotProgram() {
+        if (scheduler != null) {
+            program = scheduler.snapshot(programRevision);
+        }
+        return program.withRevision(programRevision);
     }
 
     private void writeStoredProgram(CompoundTag target) {
         if (unreadableProgramData != null && !unreadableProgramData.isEmpty()) {
             for (String key : unreadableProgramData.getAllKeys()) {
                 Tag value = unreadableProgramData.get(key);
-                if (value != null) target.put(key, value.copy());
+                if (value != null) {
+                    target.put(key, value.copy());
+                }
             }
             return;
         }
-        target.put(ProgramBridge.PROGRAM_TAG, ProgramCodec.write(snapshotProgram()));
+        target.put(PROGRAM_TAG, ProgramV3Codec.encode(snapshotProgram()));
     }
 
-    private void loadProgramData(CompoundTag tag) {
-        if (!ProgramBridge.containsProgram(tag)) {
-            graph = new WGraph();
-            functionDefinitions = new FunctionDefinitionStore();
-            persistedProgram = null;
+    private void loadProgramData(CompoundTag source) {
+        if (scheduler != null) {
+            scheduler.unload();
+            scheduler = null;
+        }
+        if (!containsProgramData(source)) {
+            program = ComputedProgramV3.empty(stableGraphId(worldPosition));
+            programRevision = 0;
             unreadableProgramData = null;
-            programRevision = 0L;
             return;
         }
         try {
-            ProgramBridge.RuntimeProgram decoded = ProgramBridge.decode(tag);
-            graph = decoded.graph();
-            functionDefinitions = decoded.functions();
-            long legacyRevision = tag.contains("ComputedProgramRevision")
-                    ? Math.max(0L, tag.getLong("ComputedProgramRevision"))
-                    : 0L;
-            programRevision = Math.max(decoded.program().revision(), legacyRevision);
-            persistedProgram = decoded.program().withRevision(programRevision);
+            ProgramV3Codec.LoadResult decoded = ProgramV3Codec.decode(
+                    source,
+                    worldPosition.toShortString(),
+                    Computed.LOGGER::warn);
+            program = decoded.program();
+            programRevision = program.revision();
             unreadableProgramData = null;
-            hydrateFunctionCardsFromLibrary();
         } catch (RuntimeException exception) {
-            dev.propulsionteam.computed.Computed.LOGGER.error(
-                    "Could not load Computed program at {}; preserving its raw NBT with an empty runtime",
+            Computed.LOGGER.error(
+                    "Could not load Computed format-3 program at {}; preserving raw program data",
                     worldPosition,
                     exception);
-            graph = new WGraph();
-            functionDefinitions = new FunctionDefinitionStore();
-            persistedProgram = null;
-            unreadableProgramData = copyProgramFields(tag);
-            programRevision = rawProgramRevision(tag);
+            program = ComputedProgramV3.empty(stableGraphId(worldPosition));
+            programRevision = rawProgramRevision(source);
+            unreadableProgramData = copyProgramFields(source);
         }
     }
 
     private static CompoundTag copyProgramFields(CompoundTag source) {
         CompoundTag preserved = new CompoundTag();
-        for (String key : List.of(
-                ProgramBridge.PROGRAM_TAG,
-                "ComputedProgramRevision",
-                "ComputerGraph",
-                "ComputerFunctions",
-                "formatVersion",
-                "revision",
-                "graph",
-                "functions",
-                "diagnostics",
-                "metadata",
-                "nodes",
-                "conns",
-                "sections",
-                "waypoints")) {
+        for (String key : List.of(PROGRAM_TAG, "formatVersion", "revision", "graph", "library", "states", "metadata")) {
             Tag value = source.get(key);
-            if (value != null) preserved.put(key, value.copy());
+            if (value != null) {
+                preserved.put(key, value.copy());
+            }
         }
         return preserved;
     }
 
+    private static boolean containsProgramData(CompoundTag source) {
+        return source.contains(PROGRAM_TAG, Tag.TAG_COMPOUND)
+                || source.contains("formatVersion")
+                || source.contains("ComputerGraph", Tag.TAG_COMPOUND)
+                || source.contains("ComputerFunctions")
+                || source.contains("graph", Tag.TAG_COMPOUND)
+                || source.contains("nodes");
+    }
+
     private static long rawProgramRevision(CompoundTag source) {
-        long revision = Math.max(0L, source.getLong("ComputedProgramRevision"));
-        revision = Math.max(revision, Math.max(0L, source.getLong("revision")));
-        if (source.contains(ProgramBridge.PROGRAM_TAG, Tag.TAG_COMPOUND)) {
-            revision = Math.max(
-                    revision,
-                    Math.max(0L, source.getCompound(ProgramBridge.PROGRAM_TAG).getLong("revision")));
+        long revision = Math.max(0, source.getLong("revision"));
+        if (source.contains(PROGRAM_TAG, Tag.TAG_COMPOUND)) {
+            revision = Math.max(revision, source.getCompound(PROGRAM_TAG).getLong("revision"));
         }
         return revision;
+    }
+
+    private static UUID stableGraphId(BlockPos pos) {
+        return UUID.nameUUIDFromBytes(
+                ("computed:graph:" + pos.toShortString()).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public Direction worldFaceForEndpoint(String name) {
+        return worldFace(name);
+    }
+
+    private Direction worldFace(String name) {
+        if (name == null) {
+            return null;
+        }
+        Direction facing = getBlockState().hasProperty(ComputerBlock.FACING)
+                ? getBlockState().getValue(ComputerBlock.FACING)
+                : Direction.NORTH;
+        return switch (name.strip().toLowerCase(java.util.Locale.ROOT)) {
+            case "front" -> facing;
+            case "back" -> facing.getOpposite();
+            case "left" -> facing.getCounterClockWise();
+            case "right" -> facing.getClockWise();
+            case "top", "up" -> Direction.UP;
+            case "bottom", "down" -> Direction.DOWN;
+            default -> null;
+        };
+    }
+
+    private static Widget toWidget(BuiltinWidget widget) {
+        Map<String, Object> properties = widget.properties();
+        Widget raw = switch (widget.type()) {
+            case "text" -> new TextWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    text(properties, "text"),
+                    widget.color(),
+                    alignment(properties));
+            case "clock" -> new ClockWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    widget.color(),
+                    flag(properties, "show_seconds"),
+                    alignment(properties));
+            case "button" -> new ButtonWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    text(properties, "label"),
+                    widget.color());
+            case "slider" -> new SliderWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    number(properties, "value"),
+                    number(properties, "minimum"),
+                    number(properties, "maximum"),
+                    widget.color(),
+                    number(properties, "step"));
+            case "progress" -> new ProgressBarWidget(
+                    widget.id(),
+                    widget.x(),
+                    widget.y(),
+                    widget.width(),
+                    widget.height(),
+                    number(properties, "value"),
+                    number(properties, "maximum"),
+                    widget.color(),
+                    (int) number(properties, "segments"));
+            default -> null;
+        };
+        if (raw == null) {
+            return null;
+        }
+        LayoutManagedWidget.LayoutMode mode =
+                "manual".equalsIgnoreCase(text(properties, "layout_mode"))
+                        ? LayoutManagedWidget.LayoutMode.MANUAL
+                        : LayoutManagedWidget.LayoutMode.LINE;
+        LayoutManagedWidget.Fit fit =
+                "fill".equalsIgnoreCase(text(properties, "fit"))
+                        ? LayoutManagedWidget.Fit.FILL
+                        : LayoutManagedWidget.Fit.AUTO;
+        return new LayoutManagedWidget(
+                raw,
+                mode,
+                Math.max(1, (int) Math.round(number(properties, "line"))),
+                Math.max(1, Math.round(number(properties, "span"))),
+                fit);
+    }
+
+    private static String text(Map<String, Object> properties, String key) {
+        Object value = properties.get(key);
+        return value instanceof String text ? text : "";
+    }
+
+    private static double number(Map<String, Object> properties, String key) {
+        Object value = properties.get(key);
+        return value instanceof Number number ? number.doubleValue() : 0;
+    }
+
+    private static boolean flag(Map<String, Object> properties, String key) {
+        return Boolean.TRUE.equals(properties.get(key));
+    }
+
+    private static TextAlignment alignment(Map<String, Object> properties) {
+        return switch (text(properties, "alignment").toLowerCase(java.util.Locale.ROOT)) {
+            case "right" -> TextAlignment.RIGHT;
+            case "center" -> TextAlignment.CENTER;
+            default -> TextAlignment.LEFT;
+        };
     }
 
     @Nullable
