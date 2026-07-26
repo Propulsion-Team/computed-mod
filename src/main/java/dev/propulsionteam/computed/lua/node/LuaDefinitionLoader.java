@@ -173,7 +173,28 @@ public final class LuaDefinitionLoader {
             }
             Double minimum = optionalNumber(options.get("min"));
             Double maximum = optionalNumber(options.get("max"));
-            return new LuaFieldSchema(fieldId, type, options.get("default"), choices, minimum, maximum);
+            String label = options.get("label").isnil()
+                    ? null
+                    : requireText(options.get("label"), "Field label");
+            FieldControl control = options.get("control").isnil()
+                    ? FieldControl.VALUE
+                    : FieldControl.parse(options.get("control").checkjstring());
+            Double step = optionalNumber(options.get("step"));
+            LuaFieldSchema schema = new LuaFieldSchema(
+                    fieldId,
+                    type,
+                    options.get("default"),
+                    choices,
+                    minimum,
+                    maximum,
+                    label,
+                    control,
+                    step);
+            String error = LuaFieldValues.validationError(schema, schema.defaultValue());
+            if (error != null) {
+                throw new LuaDefinitionException(error);
+            }
+            return schema;
         }
 
         private LuaNodeDefinition build() {

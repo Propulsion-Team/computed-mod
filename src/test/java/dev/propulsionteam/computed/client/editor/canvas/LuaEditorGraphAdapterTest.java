@@ -12,6 +12,7 @@ import dev.propulsionteam.computed.graph.PortDirection;
 import dev.propulsionteam.computed.graph.PortSnapshot;
 import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
 import dev.propulsionteam.computed.lua.node.ConnectionType;
+import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -159,6 +160,51 @@ class LuaEditorGraphAdapterTest {
         assertEquals(1, updated.rootGraph().connections().size());
         assertEquals("keep", updated.rootGraph().connections().getFirst().targetPort());
         assertEquals(replacement.hash(), updated.rootGraph().nodes().getFirst().definitionHash());
+    }
+
+    @Test
+    void editedFieldValuesRoundTripAndDuplicateIndependently() {
+        String source = """
+                local node = computed.node(1, "example:controls", "Controls")
+                node:field("amount", "number", {
+                    default = 2,
+                    min = 0,
+                    max = 10,
+                    control = "slider",
+                    step = 0.5
+                })
+                node:on_run(function(ctx) end)
+                return node
+                """;
+        var definition = dev.propulsionteam.computed.graph.LuaDefinitionSource.embedded(
+                1,
+                "example:controls",
+                source);
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(uuid(30), List.of(), List.of()),
+                Map.of(definition.id(), definition),
+                Map.of(),
+                null);
+        LuaEditorNode node = LuaEditorGraphAdapter.createEditorNode(
+                program,
+                definition.id(),
+                10,
+                20);
+        node.setFieldValue("amount", org.luaj.vm2.LuaValue.valueOf(7.4));
+        var graph = LuaEditorGraphAdapter.toEditorGraph(program);
+        graph.addNode(node);
+
+        ComputedProgramV3 restored = LuaEditorGraphAdapter.fromEditorGraph(graph, program, 1);
+        double amount = new LuaStateCodec()
+                .decode(restored.rootGraph().nodes().getFirst().fields().get("amount"))
+                .todouble();
+        LuaEditorNode duplicate = LuaEditorGraphAdapter.duplicateEditorNode(node, 40, 50);
+        duplicate.setFieldValue("amount", org.luaj.vm2.LuaValue.valueOf(1));
+
+        assertEquals(7.5, amount);
+        assertEquals(7.5, node.fieldValue("amount").todouble());
+        assertEquals(1, duplicate.fieldValue("amount").todouble());
     }
 
     private static PortSnapshot port(String id, PortDirection direction) {

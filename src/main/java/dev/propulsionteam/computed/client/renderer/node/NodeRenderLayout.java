@@ -15,14 +15,32 @@ public record NodeRenderLayout(
         boolean sideRail) {
 
     public static NodeRenderLayout measure(LuaNodeDefinition definition) {
-        int rows = Math.max(
-                Math.max(definition.inputs().size(), definition.outputs().size()),
-                definition.fields().size());
+        int portRows = Math.max(definition.inputs().size(), definition.outputs().size());
+        int fieldRows = definition.fields().size();
         boolean compact = definition.style() == NodeStyle.COMPACT;
         boolean sideRail = compact || definition.style() == NodeStyle.SINK;
-        int width = compact ? 96 : 144;
+        int titleWidth = definition.title().length() * 6 + 20;
+        int inputWidth = definition.inputs().stream()
+                .mapToInt(port -> port.id().length() * 6)
+                .max()
+                .orElse(0);
+        int outputWidth = definition.outputs().stream()
+                .mapToInt(port -> port.id().length() * 6)
+                .max()
+                .orElse(0);
+        int portWidth = inputWidth + outputWidth + 38;
+        int fieldWidth = definition.fields().stream()
+                .mapToInt(field -> field.label().length() * 6 + 108)
+                .max()
+                .orElse(0);
+        int width = Math.max(
+                compact && fieldRows == 0 ? 96 : 144,
+                Math.max(titleWidth, Math.max(portWidth, fieldWidth)));
         int titleHeight = 18;
-        int panelHeight = Math.max(18, rows * 18 + 8);
+        int contentHeight = portRows * 12
+                + (portRows > 0 && fieldRows > 0 ? 4 : 0)
+                + fieldRows * 18;
+        int panelHeight = Math.max(18, contentHeight + 8);
         return new NodeRenderLayout(
                 width,
                 titleHeight + panelHeight + 4,
@@ -31,7 +49,7 @@ public record NodeRenderLayout(
                 titleHeight + 1,
                 width - 10,
                 panelHeight,
-                18,
+                12,
                 sideRail);
     }
 }

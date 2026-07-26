@@ -58,11 +58,11 @@ class NodeRendererContractTest {
             NodeRenderLayout layout = NodeRenderLayout.measure(definition);
 
             assertTrue(layout.width() >= 96);
-            assertEquals(18, layout.socketSpacing());
-            assertTrue(layout.panelHeight() >= 7 * layout.socketSpacing());
+            assertEquals(12, layout.socketSpacing());
+            assertTrue(layout.panelHeight() >= 7 * 18);
             if (style == NodeStyle.COMPACT) {
                 assertTrue(layout.sideRail());
-                assertEquals(96, layout.width());
+                assertTrue(layout.width() >= 144);
             } else {
                 assertFalse(layout.width() < 96);
             }

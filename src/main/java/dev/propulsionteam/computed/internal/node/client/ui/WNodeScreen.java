@@ -19,9 +19,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -34,6 +37,11 @@ public class WNodeScreen extends Screen {
     private static final float ZOOM_STEP = 0.05f;
     private static final int MAX_HISTORY = 80;
     private static final int GRID_SPACING = 20;
+    private static final int ITEM_PICKER_WIDTH = 260;
+    private static final int ITEM_PICKER_ROWS = 9;
+    private static final int ITEM_PICKER_ROW_HEIGHT = 20;
+
+    private static WNodeScreen activeScreen;
 
     private final WireEditorController wires = new WireEditorController();
     private final EditorHistory<WNodeScreen> history = new EditorHistory<>(this, MAX_HISTORY);
@@ -65,13 +73,22 @@ public class WNodeScreen extends Screen {
     private int mouseX;
     private int mouseY;
     private long lastFrameNanos;
+    private boolean itemPickerOpen;
+    private String itemPickerQuery = "";
+    private int itemPickerScroll;
+    private Consumer<ItemStack> itemPickerCallback;
+    private final List<ItemStack> itemPickerItems = new ArrayList<>();
 
     public WNodeScreen(WGraph graph) {
         super(Component.literal("Computed Node Editor"));
         this.graph = graph;
     }
 
-    public static void requestItemPick(java.util.function.Consumer<ItemStack> callback) {}
+    public static void requestItemPick(Consumer<ItemStack> callback) {
+        if (activeScreen != null) {
+            activeScreen.openItemPicker(callback);
+        }
+    }
 
     protected boolean minimalCanvasMode() {
         return true;
@@ -233,6 +250,9 @@ public class WNodeScreen extends Screen {
         viewport.advance(delta, width, height);
         wires.advanceAnimation(delta);
         graphics.drawManaged(() -> renderCanvas(graphics, mouseX, mouseY, partialTick));
+        if (itemPickerOpen) {
+            renderItemPicker(graphics, mouseX, mouseY);
+        }
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
@@ -310,8 +330,20 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (itemPickerOpen) {
+            return handleItemPickerClick(mouseX, mouseY, button);
+        }
         int graphX = screenToGraphX(mouseX);
         int graphY = screenToGraphY(mouseY);
+        if (selectedNode != null && selectedNode.hasFocusedElement()) {
+            boolean handled = recordInteraction(() -> selectedNode.mouseClicked(
+                    graphX - selectedNode.getX(),
+                    graphY - selectedNode.getY(),
+                    button));
+            if (handled) {
+                return true;
+            }
+        }
         if (button == 1) {
             rightPressX = (int) mouseX;
             rightPressY = (int) mouseY;
@@ -374,7 +406,10 @@ public class WNodeScreen extends Screen {
             }
             node.setSelected(true);
             selectedNode = node;
-            if (node.mouseClicked(graphX - node.getX(), graphY - node.getY(), button)) {
+            double localX = graphX - node.getX();
+            double localY = graphY - node.getY();
+            if (node.hasInteractiveElementAt(localX, localY)
+                    && recordInteraction(() -> node.mouseClicked(localX, localY, button))) {
                 return true;
             }
             checkpoint();
@@ -401,6 +436,16 @@ public class WNodeScreen extends Screen {
             int button,
             double dragX,
             double dragY) {
+        if (selectedNode != null
+                && selectedNode.hasFocusedElement()
+                && recordInteraction(() -> selectedNode.mouseDragged(
+                        screenToGraphX(mouseX) - selectedNode.getX(),
+                        screenToGraphY(mouseY) - selectedNode.getY(),
+                        button,
+                        dragX / viewport.zoom(),
+                        dragY / viewport.zoom()))) {
+            return true;
+        }
         if (button == 1 && rightPressX >= 0) {
             if (!rightDragged) {
                 viewport.beginPan();
@@ -527,6 +572,13 @@ public class WNodeScreen extends Screen {
             double mouseY,
             double scrollX,
             double scrollY) {
+        if (itemPickerOpen) {
+            itemPickerScroll = Mth.clamp(
+                    itemPickerScroll - (int) Math.signum(scrollY) * 3,
+                    0,
+                    Math.max(0, filteredItemPickerItems().size() - ITEM_PICKER_ROWS));
+            return true;
+        }
         if (scrollY == 0) {
             return false;
         }
@@ -537,6 +589,20 @@ public class WNodeScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (itemPickerOpen) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                closeItemPicker();
+            } else if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !itemPickerQuery.isEmpty()) {
+                itemPickerQuery = itemPickerQuery.substring(0, itemPickerQuery.length() - 1);
+                itemPickerScroll = 0;
+            }
+            return true;
+        }
+        if (selectedNode != null
+                && selectedNode.hasFocusedElement()
+                && recordInteraction(() -> selectedNode.keyPressed(keyCode, scanCode, modifiers))) {
+            return true;
+        }
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_Z) {
             undo();
             return true;
@@ -573,9 +639,35 @@ public class WNodeScreen extends Screen {
     }
 
     @Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        if (itemPickerOpen) {
+            if (!Character.isISOControl(codePoint) && itemPickerQuery.length() < 80) {
+                itemPickerQuery += Character.toLowerCase(codePoint);
+                itemPickerScroll = 0;
+            }
+            return true;
+        }
+        if (selectedNode != null
+                && selectedNode.hasFocusedElement()
+                && recordInteraction(() -> selectedNode.charTyped(codePoint, modifiers))) {
+            return true;
+        }
+        return super.charTyped(codePoint, modifiers);
+    }
+
+    @Override
     public void removed() {
         persistEditorViewport(EDITOR_VIEWPORT_ROOT);
+        if (activeScreen == this) {
+            activeScreen = null;
+        }
         super.removed();
+    }
+
+    @Override
+    public void added() {
+        activeScreen = this;
+        super.added();
     }
 
     @Override
@@ -583,10 +675,165 @@ public class WNodeScreen extends Screen {
         return false;
     }
 
+    protected final boolean isEditorModalOpen() {
+        return itemPickerOpen;
+    }
+
     private void checkpoint() {
         revision++;
         history.execute(new Snapshot(graph.save()));
         wires.invalidate();
+    }
+
+    private boolean recordInteraction(BooleanSupplier interaction) {
+        CompoundTag before = graph.save();
+        if (!interaction.getAsBoolean()) {
+            return false;
+        }
+        revision++;
+        history.execute(new Snapshot(before));
+        wires.invalidate();
+        return true;
+    }
+
+    private void openItemPicker(Consumer<ItemStack> callback) {
+        itemPickerCallback = callback;
+        itemPickerQuery = "";
+        itemPickerScroll = 0;
+        itemPickerItems.clear();
+        BuiltInRegistries.ITEM.stream()
+                .map(ItemStack::new)
+                .filter(stack -> !stack.isEmpty())
+                .sorted(java.util.Comparator.comparing(
+                        stack -> stack.getHoverName().getString(),
+                        String.CASE_INSENSITIVE_ORDER))
+                .forEach(itemPickerItems::add);
+        itemPickerOpen = true;
+    }
+
+    private void closeItemPicker() {
+        itemPickerOpen = false;
+        itemPickerCallback = null;
+        itemPickerItems.clear();
+    }
+
+    private List<ItemStack> filteredItemPickerItems() {
+        if (itemPickerQuery.isBlank()) {
+            return itemPickerItems;
+        }
+        String query = itemPickerQuery.toLowerCase(java.util.Locale.ROOT);
+        return itemPickerItems.stream()
+                .filter(stack -> stack.getHoverName()
+                                .getString()
+                                .toLowerCase(java.util.Locale.ROOT)
+                                .contains(query)
+                        || BuiltInRegistries.ITEM
+                                .getKey(stack.getItem())
+                                .toString()
+                                .contains(query))
+                .toList();
+    }
+
+    private void renderItemPicker(
+            GuiGraphics graphics,
+            int mouseX,
+            int mouseY) {
+        int panelHeight = 28 + ITEM_PICKER_ROWS * ITEM_PICKER_ROW_HEIGHT + 8;
+        int x = (width - ITEM_PICKER_WIDTH) / 2;
+        int y = (height - panelHeight) / 2;
+        graphics.pose().pushPose();
+        graphics.pose().translate(0, 0, 7000);
+        graphics.fill(0, 0, width, height, 0x99000000);
+        graphics.fill(
+                x,
+                y,
+                x + ITEM_PICKER_WIDTH,
+                y + panelHeight,
+                ComputedEditorTheme.MENU_BACKGROUND);
+        graphics.renderOutline(
+                x,
+                y,
+                ITEM_PICKER_WIDTH,
+                panelHeight,
+                ComputedEditorTheme.BORDER_MENU);
+        graphics.fill(
+                x + 6,
+                y + 6,
+                x + ITEM_PICKER_WIDTH - 6,
+                y + 22,
+                ComputedEditorTheme.BACKGROUND_INPUT);
+        graphics.drawString(
+                font,
+                itemPickerQuery.isEmpty() ? "Search items..." : itemPickerQuery + "_",
+                x + 10,
+                y + 10,
+                itemPickerQuery.isEmpty()
+                        ? ComputedEditorTheme.TEXT_TERTIARY
+                        : ComputedEditorTheme.TEXT_PRIMARY,
+                false);
+        List<ItemStack> items = filteredItemPickerItems();
+        itemPickerScroll = Mth.clamp(
+                itemPickerScroll,
+                0,
+                Math.max(0, items.size() - ITEM_PICKER_ROWS));
+        for (int row = 0; row < ITEM_PICKER_ROWS && itemPickerScroll + row < items.size(); row++) {
+            ItemStack stack = items.get(itemPickerScroll + row);
+            int rowY = y + 28 + row * ITEM_PICKER_ROW_HEIGHT;
+            boolean hovered = mouseX >= x + 4
+                    && mouseX < x + ITEM_PICKER_WIDTH - 4
+                    && mouseY >= rowY
+                    && mouseY < rowY + ITEM_PICKER_ROW_HEIGHT;
+            if (hovered) {
+                graphics.fill(
+                        x + 4,
+                        rowY,
+                        x + ITEM_PICKER_WIDTH - 4,
+                        rowY + ITEM_PICKER_ROW_HEIGHT,
+                        ComputedEditorTheme.MENU_HOVER);
+            }
+            graphics.renderItem(stack, x + 7, rowY + 2);
+            graphics.drawString(
+                    font,
+                    stack.getHoverName(),
+                    x + 29,
+                    rowY + 6,
+                    ComputedEditorTheme.TEXT_PRIMARY,
+                    false);
+        }
+        graphics.pose().popPose();
+    }
+
+    private boolean handleItemPickerClick(double mouseX, double mouseY, int button) {
+        if (button != 0) {
+            closeItemPicker();
+            return true;
+        }
+        int panelHeight = 28 + ITEM_PICKER_ROWS * ITEM_PICKER_ROW_HEIGHT + 8;
+        int x = (width - ITEM_PICKER_WIDTH) / 2;
+        int y = (height - panelHeight) / 2;
+        if (mouseX < x
+                || mouseX >= x + ITEM_PICKER_WIDTH
+                || mouseY < y
+                || mouseY >= y + panelHeight) {
+            closeItemPicker();
+            return true;
+        }
+        int row = ((int) mouseY - y - 28) / ITEM_PICKER_ROW_HEIGHT;
+        List<ItemStack> items = filteredItemPickerItems();
+        int index = itemPickerScroll + row;
+        if (row >= 0 && row < ITEM_PICKER_ROWS && index >= 0 && index < items.size()) {
+            CompoundTag before = graph.save();
+            Consumer<ItemStack> callback = itemPickerCallback;
+            ItemStack selected = items.get(index).copyWithCount(1);
+            closeItemPicker();
+            if (callback != null) {
+                callback.accept(selected);
+                revision++;
+                history.execute(new Snapshot(before));
+                wires.invalidate();
+            }
+        }
+        return true;
     }
 
     private void undo() {

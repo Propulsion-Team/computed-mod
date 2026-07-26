@@ -46,7 +46,8 @@ public final class LuaEditorGraphAdapter {
                     definition == null ? "utility" : definition.category(),
                     definition == null
                             ? dev.propulsionteam.computed.lua.node.NodeStyle.STANDARD
-                            : definition.style());
+                            : definition.style(),
+                    definition);
             nodes.put(node.id(), editorNode);
             graph.addNode(editorNode);
         }
@@ -84,10 +85,14 @@ public final class LuaEditorGraphAdapter {
         base.rootGraph().nodes().forEach(node -> baseNodes.put(node.id(), node));
         List<GraphNode> nodes = new ArrayList<>();
         for (WNode editorNode : editor.getNodes()) {
-            GraphNode original = baseNodes.get(editorNode.getId());
-            if (original == null && editorNode instanceof LuaEditorNode luaNode) {
-                original = luaNode.source();
+            if (editorNode instanceof LuaEditorNode luaNode) {
+                nodes.add(luaNode.toGraphNode(
+                        editorNode.getX(),
+                        editorNode.getY(),
+                        editorNode.getId()));
+                continue;
             }
+            GraphNode original = baseNodes.get(editorNode.getId());
             if (original == null) {
                 continue;
             }
@@ -163,7 +168,8 @@ public final class LuaEditorGraphAdapter {
                 definition.title(),
                 !definition.stateDefaults().isEmpty(),
                 definition.category(),
-                definition.style());
+                definition.style(),
+                definition);
     }
 
     public static ComputedProgramV3 replaceDefinition(
@@ -232,7 +238,8 @@ public final class LuaEditorGraphAdapter {
                 source.getTitle(),
                 source.isStateBoundary(),
                 source.category(),
-                source.style());
+                source.style(),
+                source.definition());
     }
 
     public static Map<String, LuaDefinitionSource> definitions(ComputedProgramV3 program) {

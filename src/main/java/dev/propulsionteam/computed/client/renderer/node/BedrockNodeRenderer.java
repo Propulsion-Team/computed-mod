@@ -90,8 +90,8 @@ public final class BedrockNodeRenderer {
         graphics.fill(x + 2, y + 2, x + 4, y + 4, ComputedEditorTheme.SOCKET_CENTER);
         String label = pin.getName();
         int textX = input
-                ? x + 8
-                : x - 4 - Minecraft.getInstance().font.width(label);
+                ? x + 14
+                : x - 10 - Minecraft.getInstance().font.width(label);
         graphics.drawString(
                 Minecraft.getInstance().font,
                 label,

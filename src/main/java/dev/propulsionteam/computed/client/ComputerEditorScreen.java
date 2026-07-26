@@ -178,6 +178,9 @@ public class ComputerEditorScreen extends WNodeScreen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (isEditorModalOpen()) {
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         if (button == 0 && handleControlsClick(mouseX, mouseY)) {
             return true;
         }
@@ -233,6 +236,9 @@ public class ComputerEditorScreen extends WNodeScreen {
             double mouseY,
             double scrollX,
             double scrollY) {
+        if (isEditorModalOpen()) {
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        }
         if (explorerOpen && mouseX < EXPLORER_WIDTH) {
             int visible = Math.max(1, (height - 45) / EXPLORER_ROW_HEIGHT);
             explorerScroll = net.minecraft.util.Mth.clamp(
@@ -246,6 +252,9 @@ public class ComputerEditorScreen extends WNodeScreen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (isEditorModalOpen()) {
+            return super.keyPressed(keyCode, scanCode, modifiers);
+        }
         if (contextOpen && keyCode == GLFW.GLFW_KEY_ESCAPE) {
             contextOpen = false;
             return true;
@@ -282,6 +291,9 @@ public class ComputerEditorScreen extends WNodeScreen {
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
+        if (isEditorModalOpen()) {
+            return super.charTyped(codePoint, modifiers);
+        }
         if (explorerOpen
                 && explorerSearchFocused
                 && !Character.isISOControl(codePoint)

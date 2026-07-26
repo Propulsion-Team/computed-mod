@@ -127,6 +127,19 @@ public class WNode {
         return false;
     }
 
+    public boolean mouseDragged(
+            double mouseX,
+            double mouseY,
+            int button,
+            double dragX,
+            double dragY) {
+        return false;
+    }
+
+    public boolean hasInteractiveElementAt(double mouseX, double mouseY) {
+        return false;
+    }
+
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         return false;
     }
@@ -270,6 +283,12 @@ public class WNode {
 
     public void setHeight(int height) {
         this.height = height;
+    }
+
+    protected final void setMeasuredSize(int width, int height) {
+        this.width = width;
+        this.height = height;
+        layoutDirty = false;
     }
 
     public int getTopoDepth() {

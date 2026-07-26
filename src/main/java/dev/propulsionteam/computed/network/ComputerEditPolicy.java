@@ -1,6 +1,17 @@
 package dev.propulsionteam.computed.network;
 
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
+import dev.propulsionteam.computed.graph.LuaDefinitionSource;
+import dev.propulsionteam.computed.lua.compiler.LuaSourceCompiler;
+import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
+import dev.propulsionteam.computed.lua.node.IntegrationLuaLibrary;
+import dev.propulsionteam.computed.lua.node.LuaDefinitionLoader;
+import dev.propulsionteam.computed.lua.node.LuaFieldValues;
+import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
+import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
+import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public final class ComputerEditPolicy {
     public static final double MAX_DISTANCE_SQ = 16.0 * 16.0;
@@ -45,6 +56,57 @@ public final class ComputerEditPolicy {
         if (candidate.library().size() > ComputedProgramV3.MAX_EMBEDDED_DEFINITIONS) {
             return "program exceeds the embedded definition limit of "
                     + ComputedProgramV3.MAX_EMBEDDED_DEFINITIONS;
+        }
+        return fieldValues(candidate);
+    }
+
+    private static String fieldValues(ComputedProgramV3 candidate) {
+        Map<String, LuaDefinitionSource> sources = new LinkedHashMap<>(BundledLuaLibrary.load());
+        sources.putAll(IntegrationLuaLibrary.load());
+        sources.putAll(candidate.library());
+        Map<String, LuaNodeDefinition> definitions = new LinkedHashMap<>();
+        LuaSourceCompiler compiler = new LuaSourceCompiler();
+        LuaDefinitionLoader loader = new LuaDefinitionLoader();
+        LuaSandbox sandbox = new LuaSandbox();
+        for (Map.Entry<String, LuaDefinitionSource> entry : sources.entrySet()) {
+            try {
+                definitions.put(
+                        entry.getKey(),
+                        loader.load(
+                                compiler.compile(entry.getValue().apiVersion(), entry.getValue().source()),
+                                sandbox));
+            } catch (RuntimeException ignored) {
+            }
+        }
+        LuaStateCodec codec = new LuaStateCodec();
+        for (var node : candidate.rootGraph().nodes()) {
+            LuaNodeDefinition definition = definitions.get(node.definitionId());
+            if (definition == null) {
+                continue;
+            }
+            Map<String, dev.propulsionteam.computed.lua.node.LuaFieldSchema> schemas =
+                    new LinkedHashMap<>();
+            definition.fields().forEach(field -> schemas.put(field.id(), field));
+            for (String id : node.fields().keySet()) {
+                if (!schemas.containsKey(id)) {
+                    return "node " + node.id() + " contains undeclared field " + id;
+                }
+            }
+            for (var field : definition.fields()) {
+                var encoded = node.fields().get(field.id());
+                if (encoded == null) {
+                    continue;
+                }
+                try {
+                    String error = LuaFieldValues.validationError(field, codec.decode(encoded));
+                    if (error != null) {
+                        return "node " + node.id() + ' ' + error;
+                    }
+                } catch (RuntimeException exception) {
+                    return "node " + node.id() + " field " + field.id()
+                            + " could not be decoded: " + exception.getMessage();
+                }
+            }
         }
         return null;
     }
