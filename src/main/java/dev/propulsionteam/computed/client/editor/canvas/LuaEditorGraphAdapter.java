@@ -36,11 +36,23 @@ public final class LuaEditorGraphAdapter {
         Map<UUID, LuaEditorNode> nodes = new LinkedHashMap<>();
         WGraph graph = new WGraph();
         for (GraphNode node : program.rootGraph().nodes()) {
-            LuaNodeDefinition definition = definition(definitions.get(node.definitionId()));
+            LuaDefinitionSource definitionSource = definitions.get(node.definitionId());
+            LuaNodeDefinition definition = definition(definitionSource);
+            GraphNode editorSource = definitionSource != null
+                            && definitionSource.origin() != LuaDefinitionSource.Origin.EMBEDDED
+                    ? new GraphNode(
+                            node.id(),
+                            node.definitionId(),
+                            definitionSource.hash(),
+                            node.x(),
+                            node.y(),
+                            node.ports(),
+                            node.fields())
+                    : node;
             String title = definition == null ? node.definitionId() : definition.title();
             boolean stateBoundary = definition != null && !definition.stateDefaults().isEmpty();
             LuaEditorNode editorNode = new LuaEditorNode(
-                    node,
+                    editorSource,
                     title,
                     stateBoundary,
                     definition == null ? "utility" : definition.category(),
@@ -221,6 +233,29 @@ public final class LuaEditorGraphAdapter {
                 library,
                 state,
                 program.metadata());
+    }
+
+    public static ComputedProgramV3 addDefinitionAndNode(
+            ComputedProgramV3 program,
+            LuaDefinitionSource definition,
+            int x,
+            int y) {
+        ComputedProgramV3 updated = replaceDefinition(program, definition);
+        LuaEditorNode editorNode = createEditorNode(updated, definition.id(), x, y);
+        if (editorNode == null) {
+            throw new IllegalArgumentException("Lua definition could not create an editor node");
+        }
+        List<GraphNode> nodes = new ArrayList<>(updated.rootGraph().nodes());
+        nodes.add(editorNode.source());
+        return new ComputedProgramV3(
+                updated.revision(),
+                new ComputedGraph(
+                        updated.rootGraph().id(),
+                        nodes,
+                        updated.rootGraph().connections()),
+                updated.library(),
+                updated.persistentState(),
+                updated.metadata());
     }
 
     public static LuaEditorNode duplicateEditorNode(LuaEditorNode source, int x, int y) {

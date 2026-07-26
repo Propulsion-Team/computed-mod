@@ -5,6 +5,7 @@ import dev.propulsionteam.computed.client.editor.canvas.LuaEditorNode;
 import dev.propulsionteam.computed.client.editor.explorer.ExplorerNode;
 import dev.propulsionteam.computed.client.editor.explorer.ExplorerRow;
 import dev.propulsionteam.computed.client.editor.explorer.NodeExplorerModel;
+import dev.propulsionteam.computed.client.editor.lua.LuaNodeStarter;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
 import dev.propulsionteam.computed.graph.LuaDefinitionSource;
@@ -33,6 +34,7 @@ public class ComputerEditorScreen extends WNodeScreen {
     private static final int AUTO_SAVE_INTERVAL_TICKS = 20;
     private static final int EXPLORER_WIDTH = 224;
     private static final int EXPLORER_ROW_HEIGHT = 15;
+    private static final String NEW_LUA_NODE_ACTION = "computed:editor/new_lua_node";
 
     private final BlockPos computerPos;
     private WGraph editorGraph;
@@ -354,13 +356,24 @@ public class ComputerEditorScreen extends WNodeScreen {
         return source == null ? "" : source.hash();
     }
 
-    void applyLuaSource(String source, String id) {
+    void applyLuaSource(
+            String source,
+            String id,
+            boolean creationMode,
+            int placementX,
+            int placementY) {
         LuaDefinitionSource replacement = LuaDefinitionSource.embedded(1, id, source);
         ComputedProgramV3 current = LuaEditorGraphAdapter.fromEditorGraph(
                 editorGraph,
                 baseProgram,
                 serverRevision);
-        baseProgram = LuaEditorGraphAdapter.replaceDefinition(current, replacement);
+        baseProgram = creationMode
+                ? LuaEditorGraphAdapter.addDefinitionAndNode(
+                        current,
+                        replacement,
+                        placementX,
+                        placementY)
+                : LuaEditorGraphAdapter.replaceDefinition(current, replacement);
         editorGraph = LuaEditorGraphAdapter.toEditorGraph(baseProgram);
         replaceCanvasGraph(editorGraph);
         explorer = new NodeExplorerModel(explorerNodes(baseProgram));
@@ -520,7 +533,7 @@ public class ComputerEditorScreen extends WNodeScreen {
         boolean selected = hasSelectedNodes();
         List<String> rows = selected
                 ? List.of("Clone", "Unlink", "Delete")
-                : List.of("Open Node Explorer", "Paste Lua");
+                : List.of("Open Node Explorer", "New Lua Node…", "Paste Lua");
         int menuWidth = selected ? 92 : 132;
         int menuHeight = rows.size() * 18 + 4;
         int x = Math.min(contextX, width - menuWidth - 2);
@@ -577,6 +590,15 @@ public class ComputerEditorScreen extends WNodeScreen {
             return true;
         }
         ExplorerRow row = rows.get(index);
+        if (!row.folder()
+                && row.node().available()
+                && row.node().id().equals(NEW_LUA_NODE_ACTION)
+                && button == 0) {
+            explorerAnchorX = editorGraphX(width / 2.0);
+            explorerAnchorY = editorGraphY(height / 2.0);
+            openNewLuaNode(explorerAnchorX, explorerAnchorY);
+            return true;
+        }
         if (row.folder() && button == 0) {
             explorer.setExpanded(row.stablePath(), !row.expanded());
         } else if (!row.folder() && row.node().available() && button == 1) {
@@ -600,7 +622,7 @@ public class ComputerEditorScreen extends WNodeScreen {
         }
         boolean selected = hasSelectedNodes();
         int menuWidth = selected ? 92 : 132;
-        int rowCount = selected ? 3 : 2;
+        int rowCount = 3;
         int menuHeight = rowCount * 18 + 4;
         int x = Math.min(contextX, width - menuWidth - 2);
         int y = Math.min(contextY, height - menuHeight - 2);
@@ -622,6 +644,8 @@ public class ComputerEditorScreen extends WNodeScreen {
             explorerOpen = true;
             explorerSearchFocused = true;
         } else if (row == 1) {
+            openNewLuaNode(explorerAnchorX, explorerAnchorY);
+        } else if (row == 2) {
             openLuaFromClipboard();
         }
         return true;
@@ -629,6 +653,12 @@ public class ComputerEditorScreen extends WNodeScreen {
 
     private void place(ExplorerNode node) {
         if (node == null || !node.available()) {
+            return;
+        }
+        if (node.id().equals(NEW_LUA_NODE_ACTION)) {
+            explorerAnchorX = editorGraphX(width / 2.0);
+            explorerAnchorY = editorGraphY(height / 2.0);
+            openNewLuaNode(explorerAnchorX, explorerAnchorY);
             return;
         }
         LuaEditorNode placed = LuaEditorGraphAdapter.createEditorNode(
@@ -659,6 +689,17 @@ public class ComputerEditorScreen extends WNodeScreen {
                     """;
         }
         minecraft.setScreen(new LuaNodeEditorScreen(this, baseProgram, source));
+    }
+
+    private void openNewLuaNode(int x, int y) {
+        LuaNodeStarter.Starter starter = LuaNodeStarter.create();
+        minecraft.setScreen(new LuaNodeEditorScreen(
+                this,
+                baseProgram,
+                starter.source(),
+                true,
+                x,
+                y));
     }
 
     private static void drawButton(
@@ -698,6 +739,13 @@ public class ComputerEditorScreen extends WNodeScreen {
 
     private static List<ExplorerNode> explorerNodes(ComputedProgramV3 program) {
         List<ExplorerNode> nodes = new ArrayList<>();
+        nodes.add(new ExplorerNode(
+                NEW_LUA_NODE_ACTION,
+                "New Lua Node…",
+                ExplorerNode.Ownership.USER,
+                List.of(),
+                true,
+                ""));
         LuaSourceCompiler compiler = new LuaSourceCompiler();
         LuaDefinitionLoader loader = new LuaDefinitionLoader();
         LuaSandbox sandbox = new LuaSandbox();

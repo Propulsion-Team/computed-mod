@@ -172,7 +172,9 @@ public final class LuaGraphScheduler {
                         node.id()));
                 continue;
             }
-            if (!node.definitionHash().isBlank() && !node.definitionHash().equals(source.hash())) {
+            if (source.origin() == LuaDefinitionSource.Origin.EMBEDDED
+                    && !node.definitionHash().isBlank()
+                    && !node.definitionHash().equals(source.hash())) {
                 definitionDiagnostics.add(error(
                         "definition_hash_mismatch",
                         "Definition hash changed for " + node.definitionId(),

@@ -48,6 +48,9 @@ public final class LuaNodeEditorScreen extends Screen {
 
     private final ComputerEditorScreen parent;
     private final ComputedProgramV3 program;
+    private final boolean creationMode;
+    private final int placementX;
+    private final int placementY;
     private final LuaEditorSession session = new LuaEditorSession();
     private final Map<String, LuaValue> sampleInputs = new LinkedHashMap<>();
     private final Map<String, LuaValue> sampleFields = new LinkedHashMap<>();
@@ -68,9 +71,22 @@ public final class LuaNodeEditorScreen extends Screen {
             ComputerEditorScreen parent,
             ComputedProgramV3 program,
             String source) {
+        this(parent, program, source, false, 0, 0);
+    }
+
+    public LuaNodeEditorScreen(
+            ComputerEditorScreen parent,
+            ComputedProgramV3 program,
+            String source,
+            boolean creationMode,
+            int placementX,
+            int placementY) {
         super(Component.literal("Lua Node Editor"));
         this.parent = parent;
         this.program = program;
+        this.creationMode = creationMode;
+        this.placementX = placementX;
+        this.placementY = placementY;
         this.source = source == null ? "" : source;
         cursor = this.source.length();
         BuiltinEndpoints.register();
@@ -504,7 +520,12 @@ public final class LuaNodeEditorScreen extends Screen {
             status = "Click Replace to confirm the changed definition";
             return;
         }
-        parent.applyLuaSource(source, definition.id());
+        parent.applyLuaSource(
+                source,
+                definition.id(),
+                creationMode,
+                placementX,
+                placementY);
         status = "Applied; awaiting authoritative autosave";
         minecraft.setScreen(parent);
     }

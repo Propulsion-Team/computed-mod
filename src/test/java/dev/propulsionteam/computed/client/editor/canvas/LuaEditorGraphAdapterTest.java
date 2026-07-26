@@ -207,6 +207,32 @@ class LuaEditorGraphAdapterTest {
         assertEquals(1, duplicate.fieldValue("amount").todouble());
     }
 
+    @Test
+    void creationAddsTheDefinitionAndFirstInstanceAtomically() {
+        String source = """
+                local node = computed.node(1, "user:created", "Created")
+                node:field("value", "number", { default = 4 })
+                node:output("value", "number")
+                node:on_run(function(ctx) ctx:output("value", ctx:field("value")) end)
+                return node
+                """;
+        var definition = dev.propulsionteam.computed.graph.LuaDefinitionSource.embedded(
+                1,
+                "user:created",
+                source);
+        ComputedProgramV3 empty = ComputedProgramV3.empty(uuid(40));
+
+        ComputedProgramV3 created =
+                LuaEditorGraphAdapter.addDefinitionAndNode(empty, definition, 75, 90);
+
+        assertEquals(definition, created.library().get("user:created"));
+        assertEquals(1, created.rootGraph().nodes().size());
+        assertEquals("user:created", created.rootGraph().nodes().getFirst().definitionId());
+        assertEquals(75, created.rootGraph().nodes().getFirst().x());
+        assertEquals(90, created.rootGraph().nodes().getFirst().y());
+        assertNotNull(created.rootGraph().nodes().getFirst().fields().get("value"));
+    }
+
     private static PortSnapshot port(String id, PortDirection direction) {
         return new PortSnapshot(id, direction, ConnectionType.NUMBER, id);
     }

@@ -148,6 +148,33 @@ class LuaGraphSchedulerTest {
     }
 
     @Test
+    void acceptsBundledDefinitionUpdatesButKeepsEmbeddedHashProtection() {
+        LuaDefinitionSource bundled = BundledLuaLibrary.load().get("computed:constant");
+        UUID bundledId = uuid(22);
+        GraphNode bundledNode = new GraphNode(
+                bundledId,
+                bundled.id(),
+                "previous-bundled-hash",
+                0,
+                0,
+                List.of(port("value", PortDirection.OUTPUT, ConnectionType.NUMBER)),
+                Map.of());
+        ComputedProgramV3 bundledProgram = new ComputedProgramV3(
+                0,
+                new ComputedGraph(uuid(104), List.of(bundledNode), List.of()),
+                Map.of(),
+                Map.of(),
+                null);
+
+        LuaGraphTickResult bundledResult =
+                new LuaGraphScheduler(bundledProgram, uuid(205), null).tick(false);
+
+        assertEquals(10, bundledResult.outputs().get(bundledId).get("value").toint());
+        assertFalse(bundledResult.diagnostics().stream()
+                .anyMatch(diagnostic -> diagnostic.code().equals("definition_hash_mismatch")));
+    }
+
+    @Test
     void rejectsMaliciousEmbeddedSourceBeforeItCanBecomeExecutable() {
         LuaDefinitionSource invalid = LuaDefinitionSource.embedded(
                 1,
