@@ -1,6 +1,7 @@
 local node = computed.node(1, "computed:button_widget", "Button Widget")
 
 node:category("widgets")
+node:execution("tick")
 node:input("label", "string", { default = "Button" })
 node:input("color", "number", { default = 4294967295 })
 node:field("layout_mode", "choice", {
@@ -40,6 +41,7 @@ node:field("height", "number", {
 })
 node:output("widget", "widget")
 node:output("clicked", "boolean")
+node:state("pending_click", false)
 node:on_run(function(ctx)
     local widget = ctx:endpoint("computed:widget"):call(
         "button",
@@ -54,10 +56,11 @@ node:on_run(function(ctx)
     widget.span = math.max(1, math.floor(ctx:field("span")))
     widget.fit = ctx:field("fit")
     ctx:output("widget", widget)
-    ctx:output("clicked", false)
+    ctx:output("clicked", ctx:state("pending_click"))
+    ctx:set_state("pending_click", false)
 end)
 node:on_event("input", function(ctx)
-    ctx:output("clicked", true)
+    ctx:set_state("pending_click", true)
 end)
 
 return node

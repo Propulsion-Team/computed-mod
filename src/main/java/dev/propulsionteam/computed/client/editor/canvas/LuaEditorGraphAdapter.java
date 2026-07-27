@@ -2,6 +2,7 @@ package dev.propulsionteam.computed.client.editor.canvas;
 
 import dev.propulsionteam.computed.graph.ComputedGraph;
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
+import dev.propulsionteam.computed.graph.ConfigurableNodePorts;
 import dev.propulsionteam.computed.graph.GraphConnection;
 import dev.propulsionteam.computed.graph.GraphNode;
 import dev.propulsionteam.computed.graph.GraphPoint;
@@ -46,7 +47,7 @@ public final class LuaEditorGraphAdapter {
                             definitionSource.hash(),
                             node.x(),
                             node.y(),
-                            node.ports(),
+                            reconciledPorts(node.definitionId(), node.ports(), definition),
                             node.fields())
                     : node;
             String title = definition == null ? node.definitionId() : definition.title();
@@ -165,7 +166,8 @@ public final class LuaEditorGraphAdapter {
         if (source == null || definition == null) {
             return null;
         }
-        List<PortSnapshot> ports = ports(definition);
+        List<PortSnapshot> ports =
+                ConfigurableNodePorts.withInitialPort(definitionId, ports(definition));
         Map<String, net.minecraft.nbt.CompoundTag> fields = defaultFields(definition);
         GraphNode node = new GraphNode(
                 UUID.randomUUID(),
@@ -297,6 +299,26 @@ public final class LuaEditorGraphAdapter {
                 port.type(),
                 port.id())));
         return List.copyOf(ports);
+    }
+
+    private static List<PortSnapshot> reconciledPorts(
+            String definitionId,
+            List<PortSnapshot> saved,
+            LuaNodeDefinition definition) {
+        if (definition == null) {
+            return List.copyOf(saved);
+        }
+        List<PortSnapshot> reconciled = new ArrayList<>(ports(definition));
+        if (ConfigurableNodePorts.configurable(definitionId)) {
+            Set<String> staticIds = reconciled.stream()
+                    .map(port -> port.direction() + "\u0000" + port.id())
+                    .collect(java.util.stream.Collectors.toSet());
+            saved.stream()
+                    .filter(port -> !staticIds.contains(port.direction() + "\u0000" + port.id()))
+                    .forEach(reconciled::add);
+            return ConfigurableNodePorts.withInitialPort(definitionId, reconciled);
+        }
+        return List.copyOf(reconciled);
     }
 
     private static Map<String, net.minecraft.nbt.CompoundTag> defaultFields(

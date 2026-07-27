@@ -137,6 +137,10 @@ final class PendingLuaInvocation {
         return inputs.getOrDefault(id, LuaValue.NIL);
     }
 
+    Map<String, LuaValue> inputs() {
+        return LuaValueCopies.copyMap(inputs);
+    }
+
     void output(String id, LuaValue value) {
         outputs.put(id, value);
     }

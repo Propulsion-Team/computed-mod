@@ -1,12 +1,15 @@
 package dev.propulsionteam.computed.lua.node;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.propulsionteam.computed.client.editor.preview.LuaLivePreview;
 import dev.propulsionteam.computed.lua.compiler.LuaSourceCompiler;
+import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpoints;
+import dev.propulsionteam.computed.lua.runtime.LuaInvocationResult;
 import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -66,6 +69,38 @@ class BundledNodeFieldParityTest {
         delay.run();
         delay.setInput("value", LuaValue.valueOf(3));
         assertEquals(1, delay.run().outputs().get("delayed").toint());
+    }
+
+    @Test
+    void buttonEmitsOneTickPulseForEveryClick() {
+        BuiltinEndpoints.register();
+        LuaLivePreview button = new LuaLivePreview(
+                BundledLuaLibrary.load().get("computed:button_widget").source());
+
+        LuaInvocationResult initial = button.run();
+        assertTrue(initial.diagnostics().isEmpty(), initial.diagnostics().toString());
+        assertFalse(initial.outputs().get("clicked").toboolean());
+
+        button.event("input");
+        assertTrue(button.run().outputs().get("clicked").toboolean());
+        assertFalse(button.run().outputs().get("clicked").toboolean());
+
+        button.event("input");
+        assertTrue(button.run().outputs().get("clicked").toboolean());
+        assertFalse(button.run().outputs().get("clicked").toboolean());
+    }
+
+    @Test
+    void redstoneLinkSenderHasOptionalBooleanTrigger() {
+        LuaNodeDefinition sender = load(
+                IntegrationLuaLibrary.load(), "computed:create_link_sender");
+        LuaPortSchema trigger = sender.inputs().stream()
+                .filter(input -> input.id().equals("trigger"))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(ConnectionType.BOOLEAN, trigger.type());
+        assertFalse(trigger.defaultValue().toboolean());
     }
 
     private static LuaNodeDefinition load(

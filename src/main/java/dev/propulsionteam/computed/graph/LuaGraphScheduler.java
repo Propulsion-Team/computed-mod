@@ -32,6 +32,10 @@ import org.luaj.vm2.LuaValue;
 import org.luaj.vm2.Varargs;
 
 public final class LuaGraphScheduler {
+    private static final int MAX_QUEUED_EVENTS = 1024;
+    private static final String EVENT_BUS = "event_bus";
+    private static final String EVENT_RECEIVER = "computed:event_receiver";
+
     private final ComputedProgramV3 program;
     private final LuaComputerRuntime runtime;
     private final LuaStateCodec stateCodec = new LuaStateCodec();
@@ -44,6 +48,8 @@ public final class LuaGraphScheduler {
     private final List<ComputedDiagnostic> definitionDiagnostics = new ArrayList<>();
     private final ArrayDeque<GraphEvent> events = new ArrayDeque<>();
     private final GraphAnalysisResult analysis;
+    private final Map<String, List<UUID>> eventSubscribers;
+    private final Map<String, List<UUID>> namedEventReceivers;
     private long tick;
     private boolean stepRequested;
 
@@ -74,6 +80,8 @@ public final class LuaGraphScheduler {
                     LuaNodeInstance instance = instances.get(node.id());
                     return instance != null && !instance.definition().stateDefaults().isEmpty();
                 });
+        eventSubscribers = indexEventSubscribers();
+        namedEventReceivers = indexNamedEventReceivers();
     }
 
     public LuaGraphTickResult tick(boolean preview) {
@@ -103,7 +111,7 @@ public final class LuaGraphScheduler {
                     tick,
                     runtime.nextGraphStep(),
                     preview,
-                    (name, values) -> events.addLast(new GraphEvent(null, name, values)));
+                    (name, values) -> enqueue(new GraphEvent(null, name, values)));
             outputs.put(nodeId, result.outputs());
             diagnostics.addAll(result.diagnostics());
             if (instance.definition().executionPolicy() == LuaExecutionPolicy.INPUT) {
@@ -120,15 +128,17 @@ public final class LuaGraphScheduler {
     }
 
     public void emit(String eventName, LuaValue... arguments) {
-        events.addLast(new GraphEvent(null, eventName, List.of(arguments)));
+        enqueue(new GraphEvent(null, eventName, List.of(arguments)));
     }
 
     public boolean eventNode(UUID nodeId, String eventName, LuaValue... arguments) {
         LuaNodeInstance instance = instances.get(nodeId);
-        if (instance == null || !instance.definition().eventHandlers().containsKey(eventName)) {
+        if (instance == null
+                || !instance.definition().eventHandlers().containsKey(eventName)
+                || events.size() >= MAX_QUEUED_EVENTS) {
             return false;
         }
-        events.addLast(new GraphEvent(nodeId, eventName, List.of(arguments)));
+        enqueue(new GraphEvent(nodeId, eventName, List.of(arguments)));
         return true;
     }
 
@@ -244,6 +254,9 @@ public final class LuaGraphScheduler {
     private Map<String, LuaValue> inputs(LuaNodeDefinition definition, GraphNode node) {
         Map<String, LuaValue> values = new LinkedHashMap<>();
         definition.inputs().forEach(input -> values.put(input.id(), LuaValueCopies.copy(input.defaultValue())));
+        node.ports().stream()
+                .filter(port -> port.direction() == PortDirection.INPUT)
+                .forEach(port -> values.putIfAbsent(port.id(), LuaValue.NIL));
         for (GraphConnection connection : incoming.getOrDefault(node.id(), List.of())) {
             Map<String, LuaValue> sourceOutputs = outputs.get(connection.sourceNode());
             if (sourceOutputs == null) {
@@ -288,7 +301,8 @@ public final class LuaGraphScheduler {
         int remaining = events.size();
         while (remaining-- > 0) {
             GraphEvent event = events.removeFirst();
-            for (UUID nodeId : analysis.executionOrder()) {
+            List<UUID> subscribers = subscribers(event);
+            for (UUID nodeId : subscribers) {
                 LuaNodeInstance instance = instances.get(nodeId);
                 GraphNode node = nodes.get(nodeId);
                 if (instance == null
@@ -306,11 +320,65 @@ public final class LuaGraphScheduler {
                         tick,
                         runtime.nextGraphStep(),
                         preview,
-                        (name, values) -> events.addLast(new GraphEvent(null, name, values)));
+                        (name, values) -> enqueue(new GraphEvent(null, name, values)));
                 outputs.put(nodeId, result.outputs());
                 diagnostics.addAll(result.diagnostics());
             }
         }
+    }
+
+    private List<UUID> subscribers(GraphEvent event) {
+        if (event.targetNode() != null) {
+            return List.of(event.targetNode());
+        }
+        if (EVENT_BUS.equals(event.name())
+                && !event.arguments().isEmpty()
+                && event.arguments().getFirst().isstring()) {
+            return namedEventReceivers.getOrDefault(
+                    event.arguments().getFirst().tojstring(), List.of());
+        }
+        return eventSubscribers.getOrDefault(event.name(), List.of());
+    }
+
+    private Map<String, List<UUID>> indexEventSubscribers() {
+        Map<String, List<UUID>> indexed = new LinkedHashMap<>();
+        for (UUID nodeId : analysis.executionOrder()) {
+            LuaNodeInstance instance = instances.get(nodeId);
+            if (instance == null) {
+                continue;
+            }
+            for (String eventName : instance.definition().eventHandlers().keySet()) {
+                indexed.computeIfAbsent(eventName, ignored -> new ArrayList<>()).add(nodeId);
+            }
+        }
+        indexed.replaceAll((name, subscribers) -> List.copyOf(subscribers));
+        return java.util.Collections.unmodifiableMap(indexed);
+    }
+
+    private Map<String, List<UUID>> indexNamedEventReceivers() {
+        Map<String, List<UUID>> indexed = new LinkedHashMap<>();
+        for (UUID nodeId : analysis.executionOrder()) {
+            GraphNode node = nodes.get(nodeId);
+            if (node == null || !EVENT_RECEIVER.equals(node.definitionId())) {
+                continue;
+            }
+            LuaValue eventName = resolvedFields
+                    .getOrDefault(nodeId, Map.of())
+                    .getOrDefault("event_name", LuaValue.NIL);
+            if (eventName.isstring() && !eventName.tojstring().isBlank()) {
+                indexed.computeIfAbsent(eventName.tojstring(), ignored -> new ArrayList<>()).add(nodeId);
+            }
+        }
+        indexed.replaceAll((name, subscribers) -> List.copyOf(subscribers));
+        return java.util.Collections.unmodifiableMap(indexed);
+    }
+
+    private void enqueue(GraphEvent event) {
+        if (events.size() >= MAX_QUEUED_EVENTS) {
+            throw new IllegalStateException(
+                    "Graph event queue exceeded " + MAX_QUEUED_EVENTS + " pending events");
+        }
+        events.addLast(event);
     }
 
     private boolean same(Map<String, LuaValue> left, Map<String, LuaValue> right) {

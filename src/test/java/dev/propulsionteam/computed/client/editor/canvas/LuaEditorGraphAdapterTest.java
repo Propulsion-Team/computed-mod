@@ -88,6 +88,53 @@ class LuaEditorGraphAdapterTest {
     }
 
     @Test
+    void reconcilesNewBundledStaticPortsAndPreservesConfigurablePorts() {
+        var definitions = BundledLuaLibrary.load();
+        GraphNode legacyRedstone = new GraphNode(
+                uuid(41),
+                "computed:redstone_emitter",
+                "old-hash",
+                0,
+                0,
+                List.of(new PortSnapshot(
+                        "level", PortDirection.INPUT, ConnectionType.NUMBER, "level")),
+                Map.of());
+        GraphNode monitor = new GraphNode(
+                uuid(42),
+                "computed:peripheral",
+                definitions.get("computed:peripheral").hash(),
+                100,
+                0,
+                List.of(
+                        new PortSnapshot(
+                                "widget_1", PortDirection.INPUT, ConnectionType.WIDGET, "Widget 1"),
+                        new PortSnapshot(
+                                "widget_2", PortDirection.INPUT, ConnectionType.WIDGET, "Widget 2")),
+                Map.of());
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(uuid(43), List.of(legacyRedstone, monitor), List.of()),
+                Map.of(),
+                Map.of(),
+                null);
+
+        var editor = LuaEditorGraphAdapter.toEditorGraph(program);
+        ComputedProgramV3 restored =
+                LuaEditorGraphAdapter.fromEditorGraph(editor, program, 1);
+
+        assertEquals(
+                List.of("trigger", "event", "level"),
+                restored.rootGraph().node(legacyRedstone.id()).orElseThrow().ports().stream()
+                        .map(PortSnapshot::id)
+                        .toList());
+        assertEquals(
+                List.of("widget_1", "widget_2"),
+                restored.rootGraph().node(monitor.id()).orElseThrow().ports().stream()
+                        .map(PortSnapshot::id)
+                        .toList());
+    }
+
+    @Test
     void replacementRetainsOnlyStableCompatiblePorts() {
         String originalSource = """
                 local node = computed.node(1, "example:test", "Test")

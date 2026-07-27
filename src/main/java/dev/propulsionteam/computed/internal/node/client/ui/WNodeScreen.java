@@ -636,7 +636,7 @@ public class WNodeScreen extends Screen {
                     screenToGraphY(mouseY));
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
+        if (keyCode == GLFW.GLFW_KEY_DELETE) {
             removeSelectedNodes();
             return true;
         }
@@ -965,8 +965,7 @@ public class WNodeScreen extends Screen {
         }
         WPin.DataType sourceType = source.getOutputs().get(output).getDataType();
         WPin.DataType targetType = target.getInputs().get(input).getDataType();
-        return sourceType == targetType
-                || sourceType == WPin.DataType.NUMBER && targetType == WPin.DataType.STRING;
+        return sourceType == targetType;
     }
 
     private void insertWaypoint(WireEditorController.Hover hover) {

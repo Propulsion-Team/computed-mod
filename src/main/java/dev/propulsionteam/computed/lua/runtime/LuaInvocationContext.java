@@ -2,6 +2,7 @@ package dev.propulsionteam.computed.lua.runtime;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.luaj.vm2.LuaError;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.LuaValue;
@@ -14,6 +15,13 @@ final class LuaInvocationContext {
 
     LuaInvocationContext() {
         table.set("input", method(args -> invocation.input(args.arg(2).checkjstring())));
+        table.set("inputs", method(args -> {
+            LuaTable values = new LuaTable();
+            for (Map.Entry<String, LuaValue> entry : invocation.inputs().entrySet()) {
+                values.set(entry.getKey(), entry.getValue());
+            }
+            return values;
+        }));
         table.set("output", method(args -> {
             invocation.output(args.arg(2).checkjstring(), args.arg(3));
             return LuaValue.NIL;

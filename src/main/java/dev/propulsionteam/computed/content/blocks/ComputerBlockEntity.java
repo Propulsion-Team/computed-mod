@@ -65,6 +65,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     private long programRevision;
     private transient boolean dropsHandled;
     private final int[] emittedRedstone = new int[Direction.values().length];
+    private boolean redstoneUpdatePending;
 
     public ComputerBlockEntity(BlockPos pos, BlockState state) {
         super(ComputedRegistries.COMPUTER_BLOCK_ENTITY.get(), pos, state);
@@ -78,6 +79,7 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
         LuaGraphScheduler active = computer.ensureScheduler();
         ComputedProgramV3 before = computer.program;
         active.tick(false);
+        computer.flushRedstoneUpdate();
         ComputedProgramV3 after = active.snapshot(computer.programRevision);
         computer.program = after;
         if (!before.persistentState().equals(after.persistentState())) {
@@ -396,6 +398,15 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
             return;
         }
         emittedRedstone[worldFace.ordinal()] = clamped;
+        redstoneUpdatePending = true;
+        setChanged();
+    }
+
+    private void flushRedstoneUpdate() {
+        if (!redstoneUpdatePending || level == null || level.isClientSide) {
+            return;
+        }
+        redstoneUpdatePending = false;
         level.updateNeighborsAt(worldPosition, getBlockState().getBlock());
     }
 

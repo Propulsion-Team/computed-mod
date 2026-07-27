@@ -178,6 +178,99 @@ class LuaGraphSchedulerTest {
     }
 
     @Test
+    void routesNamedEventsWithTypedDynamicPayloadPorts() {
+        LuaDefinitionSource sourceDefinition =
+                LuaDefinitionSource.embedded(1, "example:event_source", """
+                        local node = computed.node(1, "example:event_source", "Event Source")
+                        node:output("trigger", "boolean")
+                        node:output("value", "number")
+                        node:on_run(function(ctx)
+                            ctx:output("trigger", true)
+                            ctx:output("value", 42)
+                        end)
+                        return node
+                        """);
+        LuaDefinitionSource sinkDefinition =
+                LuaDefinitionSource.embedded(1, "example:event_sink", """
+                        local node = computed.node(1, "example:event_sink", "Event Sink")
+                        node:input("value", "number", { default = 0 })
+                        node:output("seen", "number")
+                        node:on_run(function(ctx)
+                            ctx:output("seen", ctx:input("value"))
+                        end)
+                        return node
+                        """);
+        Map<String, LuaDefinitionSource> bundled = BundledLuaLibrary.load();
+        UUID sourceId = uuid(30);
+        UUID senderId = uuid(31);
+        UUID receiverId = uuid(32);
+        UUID displayId = uuid(33);
+        GraphNode source = new GraphNode(
+                sourceId,
+                sourceDefinition.id(),
+                sourceDefinition.hash(),
+                0,
+                0,
+                List.of(
+                        port("trigger", PortDirection.OUTPUT, ConnectionType.BOOLEAN),
+                        port("value", PortDirection.OUTPUT, ConnectionType.NUMBER)),
+                Map.of());
+        GraphNode sender = new GraphNode(
+                senderId,
+                ConfigurableNodePorts.EVENT_SENDER,
+                bundled.get(ConfigurableNodePorts.EVENT_SENDER).hash(),
+                80,
+                0,
+                List.of(
+                        port("trigger", PortDirection.INPUT, ConnectionType.BOOLEAN),
+                        port("data_1", PortDirection.INPUT, ConnectionType.NUMBER)),
+                Map.of("event_name", codec.encode(LuaValue.valueOf("door_opened"))));
+        GraphNode receiver = new GraphNode(
+                receiverId,
+                ConfigurableNodePorts.EVENT_RECEIVER,
+                bundled.get(ConfigurableNodePorts.EVENT_RECEIVER).hash(),
+                160,
+                0,
+                List.of(
+                        port("triggered", PortDirection.OUTPUT, ConnectionType.EVENT),
+                        port("data_1", PortDirection.OUTPUT, ConnectionType.NUMBER)),
+                Map.of("event_name", codec.encode(LuaValue.valueOf("door_opened"))));
+        GraphNode display = new GraphNode(
+                displayId,
+                sinkDefinition.id(),
+                sinkDefinition.hash(),
+                240,
+                0,
+                List.of(
+                        port("value", PortDirection.INPUT, ConnectionType.NUMBER),
+                        port("seen", PortDirection.OUTPUT, ConnectionType.NUMBER)),
+                Map.of());
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(
+                        uuid(106),
+                        List.of(display, receiver, sender, source),
+                        List.of(
+                                edge(sourceId, "trigger", senderId, "trigger"),
+                                edge(sourceId, "value", senderId, "data_1"),
+                                edge(receiverId, "data_1", displayId, "value"))),
+                Map.of(
+                        sourceDefinition.id(), sourceDefinition,
+                        sinkDefinition.id(), sinkDefinition),
+                Map.of(),
+                null);
+
+        LuaGraphScheduler scheduler = new LuaGraphScheduler(program, uuid(207), null);
+        LuaGraphTickResult first = scheduler.tick(false);
+        LuaGraphTickResult second = scheduler.tick(false);
+
+        assertTrue(first.diagnostics().isEmpty(), first.diagnostics().toString());
+        assertEquals(42, first.outputs().get(receiverId).get("data_1").toint());
+        assertTrue(first.outputs().get(receiverId).get("triggered").toint() > 0);
+        assertEquals(42, second.outputs().get(displayId).get("seen").toint());
+    }
+
+    @Test
     void keepsMissingDefinitionsAsDiagnosedNonExecutableNodes() {
         UUID nodeId = uuid(20);
         GraphNode missing = new GraphNode(

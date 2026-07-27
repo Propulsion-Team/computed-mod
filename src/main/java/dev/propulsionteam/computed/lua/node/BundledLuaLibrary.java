@@ -20,6 +20,8 @@ public final class BundledLuaLibrary {
             new Entry("computed:comparator_read", "computed/lua/nodes/world/comparator.lua"),
             new Entry("computed:redstone_emitter", "computed/lua/nodes/world/redstone_output.lua"),
             new Entry("computed:command", "computed/lua/nodes/io/command.lua"),
+            new Entry("computed:event_sender", "computed/lua/nodes/flow/event_sender.lua"),
+            new Entry("computed:event_receiver", "computed/lua/nodes/flow/event_receiver.lua"),
             new Entry("computed:text_widget", "computed/lua/nodes/widgets/text.lua"),
             new Entry("computed:clock_widget", "computed/lua/nodes/widgets/clock.lua"),
             new Entry("computed:button_widget", "computed/lua/nodes/widgets/button.lua"),

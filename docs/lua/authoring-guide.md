@@ -32,6 +32,8 @@ Definition IDs are stable, lowercase, namespaced identifiers. Port, field, state
 
 Choose `input` execution for dataflow nodes, `tick` for world sensors, `step` for explicitly stepped nodes, and `event` when only named handlers should run. A failed invocation discards all staged output and state changes. The next eligible execution retries the callback.
 
+For user-authored wireless graph flow, see [Graph events](graph-events.md). Lua callbacks can inspect configurable per-instance inputs with `ctx:inputs()`.
+
 Use endpoints for Minecraft or addon access. Lua values never contain Java or Minecraft objects.
 
 ## Create a node in a computer

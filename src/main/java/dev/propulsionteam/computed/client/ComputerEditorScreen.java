@@ -183,6 +183,10 @@ public class ComputerEditorScreen extends WNodeScreen {
         if (isEditorModalOpen()) {
             return super.mouseClicked(mouseX, mouseY, button);
         }
+        if (explorerSearchFocused
+                && !contains(mouseX, mouseY, 6, 27, EXPLORER_WIDTH - 12, 16)) {
+            explorerSearchFocused = false;
+        }
         if (button == 0 && handleControlsClick(mouseX, mouseY)) {
             return true;
         }
@@ -266,10 +270,12 @@ public class ComputerEditorScreen extends WNodeScreen {
                 explorerSearchFocused = false;
                 return true;
             }
-            if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !explorerSearch.isEmpty()) {
-                explorerSearch = explorerSearch.substring(0, explorerSearch.length() - 1);
-                explorer.search(explorerSearch);
-                explorerScroll = 0;
+            if (keyCode == GLFW.GLFW_KEY_BACKSPACE) {
+                if (!explorerSearch.isEmpty()) {
+                    explorerSearch = explorerSearch.substring(0, explorerSearch.length() - 1);
+                    explorer.search(explorerSearch);
+                    explorerScroll = 0;
+                }
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
@@ -453,13 +459,15 @@ public class ComputerEditorScreen extends WNodeScreen {
         graphics.vLine(EXPLORER_WIDTH - 1, 0, height, ComputedEditorTheme.BORDER_MENU);
         graphics.drawString(font, "Node Explorer", 34, 11, ComputedEditorTheme.TEXT_HEADER, false);
         int searchColor = explorerSearchFocused
-                ? ComputedEditorTheme.BORDER_HIGHLIGHT
+                ? ComputedEditorTheme.ACCENT
                 : ComputedEditorTheme.BORDER_DEFAULT;
         graphics.fill(6, 27, EXPLORER_WIDTH - 6, 43, ComputedEditorTheme.BACKGROUND_INPUT);
         graphics.renderOutline(6, 27, EXPLORER_WIDTH - 12, 16, searchColor);
+        boolean cursorVisible = explorerSearchFocused
+                && (System.currentTimeMillis() / 500) % 2 == 0;
         String searchText = explorerSearch.isEmpty() && !explorerSearchFocused
                 ? "Search nodes"
-                : explorerSearch + (explorerSearchFocused ? "_" : "");
+                : explorerSearch + (cursorVisible ? "_" : "");
         graphics.drawString(
                 font,
                 searchText,

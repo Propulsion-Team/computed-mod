@@ -11,8 +11,11 @@ public final class WPin {
 
     public enum DataType {
         NUMBER,
+        BOOLEAN,
         STRING,
-        WIDGET
+        EVENT,
+        WIDGET,
+        TABLE
     }
 
     public static final int COLOR_NUMBER_DEFAULT = 0xFFFFFFFF;

@@ -27,6 +27,8 @@ public class WNode {
     private int topoDepth;
     private boolean selected;
     private boolean layoutDirty = true;
+    private boolean pinSchemaUpdate;
+    private boolean pinSchemaChanged;
     private final List<WPin> inputs = new ArrayList<>();
     private final List<WPin> outputs = new ArrayList<>();
     private transient WGraph owningGraph;
@@ -70,8 +72,24 @@ public class WNode {
 
     public void markPinSchemaChanged() {
         layoutDirty = true;
-        if (owningGraph != null) {
+        if (pinSchemaUpdate) {
+            pinSchemaChanged = true;
+        } else if (owningGraph != null) {
             owningGraph.onNodePinSchemaChanged(this);
+        }
+    }
+
+    protected final void beginPinSchemaUpdate() {
+        pinSchemaUpdate = true;
+    }
+
+    protected final void endPinSchemaUpdate() {
+        pinSchemaUpdate = false;
+        if (pinSchemaChanged) {
+            pinSchemaChanged = false;
+            if (owningGraph != null) {
+                owningGraph.onNodePinSchemaChanged(this);
+            }
         }
     }
 

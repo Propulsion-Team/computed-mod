@@ -48,6 +48,10 @@ Context methods are available only inside callbacks. Reads have no side effects;
 
 Returns the current connected or default input. Errors on malformed calls. Preview returns the editable sample input. Example: `local speed = ctx:input("speed")`.
 
+## ctx:inputs()
+
+Returns a copy of all current inputs keyed by stable port ID, including configurable per-node ports. Example: `for id, value in pairs(ctx:inputs()) do ... end`.
+
 ## ctx:output(id, value)
 
 Stages an output and returns nothing. Errors if the value cannot later be serialized. Preview updates the real renderer sample. Example: `ctx:output("result", 4)`.
