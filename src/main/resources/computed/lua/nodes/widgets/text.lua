@@ -2,6 +2,7 @@ local node = computed.node(1, "computed:text_widget", "Text Widget")
 
 node:category("widgets")
 node:input("text", "string", { default = "" })
+node:input("color", "number", { default = 4294967295 })
 node:field("layout_mode", "choice", {
     default = "line",
     label = "Layout",
@@ -45,7 +46,8 @@ node:field("alignment", "choice", {
 node:output("widget", "widget")
 node:on_run(function(ctx)
     local widgets = ctx:endpoint("computed:widget")
-    local widget = widgets:call("text", ctx:input("text"))
+    local widget = widgets:call("text", ctx:input("text"),
+        ctx:input("color"))
     widget.x = math.floor(ctx:field("x"))
     widget.y = math.floor(ctx:field("y"))
     widget.width = math.max(1, math.floor(ctx:field("width")))

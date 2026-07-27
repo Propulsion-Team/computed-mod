@@ -94,16 +94,24 @@ public final class BuiltinEndpoints {
                 "Runs a command through the computer host."));
         ComputedEndpoints.register("computed:widget", endpoint -> endpoint.method(
                         "text",
-                        EndpointSignature.of(List.of(EndpointType.STRING), List.of(EndpointType.TABLE)),
+                        EndpointSignature.of(
+                                List.of(EndpointType.STRING, EndpointType.NUMBER),
+                                List.of(EndpointType.TABLE)),
                         EndpointPolicy.computerThread(false, true),
                         invocation -> EndpointResult.immediate(widget(
                                 invocation.nodeId(),
                                 "text",
-                                Map.of("text", argument(invocation, 0), "alignment", "left"))),
+                                Map.of(
+                                        "text", argument(invocation, 0),
+                                        "color", invocation.arguments().get(1).checkint(),
+                                        "alignment", "left"))),
                         invocation -> EndpointResult.immediate(widget(
                                 invocation.nodeId(),
                                 "text",
-                                Map.of("text", argument(invocation, 0), "alignment", "left"))),
+                                Map.of(
+                                        "text", argument(invocation, 0),
+                                        "color", invocation.arguments().get(1).checkint(),
+                                        "alignment", "left"))),
                         "Creates a text widget value.")
                 .method(
                         "clock",
