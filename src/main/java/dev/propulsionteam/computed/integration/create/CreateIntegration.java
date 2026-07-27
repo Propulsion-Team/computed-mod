@@ -27,21 +27,21 @@ public final class CreateIntegration {
         ComputedEndpoints.register("create:kinetic", endpoint -> endpoint.method(
                         "speed",
                         EndpointSignature.of(List.of(), List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> number(kinetic(invocation, Metric.SPEED)),
                         ignored -> number(0),
                         "Returns the adjacent Create kinetic speed.")
                 .method(
                         "stress",
                         EndpointSignature.of(List.of(), List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> number(kinetic(invocation, Metric.STRESS)),
                         ignored -> number(0),
                         "Returns the adjacent Create kinetic stress.")
                 .method(
                         "capacity",
                         EndpointSignature.of(List.of(), List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> number(kinetic(invocation, Metric.CAPACITY)),
                         ignored -> number(0),
                         "Returns the adjacent Create kinetic capacity."));
@@ -50,7 +50,7 @@ public final class CreateIntegration {
                         EndpointSignature.of(
                                 List.of(EndpointType.STRING, EndpointType.STRING),
                                 List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, false),
+                        EndpointPolicy.serverThread(false, false),
                         CreateIntegration::receive,
                         null,
                         "Reads a Create redstone-link frequency pair.")
@@ -59,7 +59,7 @@ public final class CreateIntegration {
                         EndpointSignature.of(
                                 List.of(EndpointType.STRING, EndpointType.STRING, EndpointType.NUMBER),
                                 List.of()),
-                        EndpointPolicy.computerThread(true, false),
+                        EndpointPolicy.serverThread(true, false),
                         CreateIntegration::transmit,
                         null,
                         "Writes a Create redstone-link frequency pair."));

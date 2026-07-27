@@ -7,13 +7,22 @@ import dev.propulsionteam.computed.lua.compiler.LuaSourceCompiler;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpoints;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
+import dev.propulsionteam.computed.lua.endpoint.EndpointResult;
+import dev.propulsionteam.computed.lua.endpoint.ServerEndpointExecutor;
 import dev.propulsionteam.computed.lua.runtime.LuaComputerRuntime;
+import dev.propulsionteam.computed.lua.runtime.LuaInvocationResult;
+import dev.propulsionteam.computed.lua.runtime.LuaNodeInstance;
 import dev.propulsionteam.computed.lua.runtime.LuaNodeStatus;
 import dev.propulsionteam.computed.lua.sandbox.LuaInstructionBudget;
 import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import org.junit.jupiter.api.Test;
 
 class BundledLuaLibraryTest {
@@ -35,43 +44,7 @@ class BundledLuaLibraryTest {
     @Test
     void everyBundledDefinitionRunsWithItsDefaults() {
         BuiltinEndpoints.register();
-        var host = new BuiltinEndpointHost() {
-            @Override
-            public double worldTime() {
-                return 6000;
-            }
-
-            @Override
-            public double[] position() {
-                return new double[] {0.5, 64.5, 0.5};
-            }
-
-            @Override
-            public double[] rotation() {
-                return new double[] {0, 0, 0};
-            }
-
-            @Override
-            public int redstoneInput(String face) {
-                return 0;
-            }
-
-            @Override
-            public int comparatorInput(String face) {
-                return 0;
-            }
-
-            @Override
-            public boolean blockPresent(String face) {
-                return false;
-            }
-
-            @Override
-            public void redstoneOutput(String face, int level) {}
-
-            @Override
-            public void runCommand(String command) {}
-        };
+        QueuedBuiltinHost host = new QueuedBuiltinHost();
         var runtime = new LuaComputerRuntime(UUID.randomUUID(), new LuaInstructionBudget(), host);
         runtime.beginTick(1);
 
@@ -81,32 +54,48 @@ class BundledLuaLibraryTest {
             instance.definition().inputs().forEach(port -> inputs.put(port.id(), port.defaultValue()));
             var fields = new LinkedHashMap<String, org.luaj.vm2.LuaValue>();
             instance.definition().fields().forEach(field -> fields.put(field.id(), field.defaultValue()));
-            var result = instance.run(inputs, fields, 1, runtime.nextGraphStep(), false, (name, values) -> {});
+            LuaInvocationResult result =
+                    instance.run(inputs, fields, 1, runtime.nextGraphStep(), false, (name, values) -> {});
+            result = completeQueuedInvocation(host, instance, result);
             assertEquals(LuaNodeStatus.IDLE, result.status(), id + ": " + result.diagnostics());
             assertEquals(List.of(), result.diagnostics(), id);
         });
     }
 
     @Test
+    void redstoneOutputRunsOnlyAfterServerDispatch() {
+        BuiltinEndpoints.register();
+        QueuedBuiltinHost host = new QueuedBuiltinHost();
+        var runtime = new LuaComputerRuntime(UUID.randomUUID(), new LuaInstructionBudget(), host);
+        runtime.beginTick(1);
+        var source = BundledLuaLibrary.load().get("computed:redstone_emitter");
+        LuaNodeInstance instance =
+                runtime.createNode(UUID.randomUUID(), source.apiVersion(), source.source());
+        var inputs = new LinkedHashMap<String, org.luaj.vm2.LuaValue>();
+        instance.definition().inputs().forEach(port -> inputs.put(port.id(), port.defaultValue()));
+        inputs.put("trigger", org.luaj.vm2.LuaValue.TRUE);
+        inputs.put("level", org.luaj.vm2.LuaValue.valueOf(15));
+        var fields = new LinkedHashMap<String, org.luaj.vm2.LuaValue>();
+        instance.definition().fields().forEach(field -> fields.put(field.id(), field.defaultValue()));
+
+        LuaInvocationResult yielded =
+                instance.run(inputs, fields, 1, runtime.nextGraphStep(), false, null);
+
+        assertEquals(LuaNodeStatus.YIELDED, yielded.status());
+        assertTrue(host.redstoneLevels.isEmpty());
+
+        host.runNext();
+        LuaInvocationResult resumed = instance.resumeIfReady();
+
+        assertEquals(LuaNodeStatus.IDLE, resumed.status());
+        assertEquals(List.of(15), host.redstoneLevels);
+        assertTrue(!host.redstoneThread.startsWith("Coroutine-"));
+    }
+
+    @Test
     void monitorDefinitionCallsItsProductionEndpoint() {
         BuiltinEndpoints.register();
-        var calls = new java.util.ArrayList<List<BuiltinWidget>>();
-        var targets = new java.util.ArrayList<String>();
-        var host = new BuiltinEndpointHost() {
-            @Override
-            public double worldTime() {
-                return 0;
-            }
-
-            @Override
-            public void runCommand(String command) {}
-
-            @Override
-            public void showWidgets(String target, List<BuiltinWidget> widgets) {
-                targets.add(target);
-                calls.add(widgets);
-            }
-        };
+        QueuedBuiltinHost host = new QueuedBuiltinHost();
         var source = BundledLuaLibrary.load().get("computed:peripheral");
         var runtime = new LuaComputerRuntime(UUID.randomUUID(), new LuaInstructionBudget(), host);
         runtime.beginTick(1);
@@ -126,13 +115,15 @@ class BundledLuaLibraryTest {
         var fields = new LinkedHashMap<String, org.luaj.vm2.LuaValue>();
         instance.definition().fields().forEach(field -> fields.put(field.id(), field.defaultValue()));
 
-        var result = instance.run(inputs, fields, 1, runtime.nextGraphStep(), false, (name, values) -> {});
+        LuaInvocationResult result =
+                instance.run(inputs, fields, 1, runtime.nextGraphStep(), false, (name, values) -> {});
+        result = completeQueuedInvocation(host, instance, result);
 
         assertEquals(LuaNodeStatus.IDLE, result.status());
-        assertEquals(List.of("front"), targets);
-        assertEquals(1, calls.size());
-        assertEquals(1, calls.getFirst().size());
-        BuiltinWidget shown = calls.getFirst().getFirst();
+        assertEquals(List.of("front"), host.monitorTargets);
+        assertEquals(1, host.monitorWidgets.size());
+        assertEquals(1, host.monitorWidgets.getFirst().size());
+        BuiltinWidget shown = host.monitorWidgets.getFirst().getFirst();
         assertEquals(widgetId, shown.id());
         assertEquals("text", shown.type());
         assertEquals("Monitor output", shown.properties().get("text"));
@@ -142,5 +133,80 @@ class BundledLuaLibraryTest {
         assertEquals(1.0, shown.properties().get("line"));
         assertEquals(1.0, shown.properties().get("span"));
         assertEquals("auto", shown.properties().get("fit"));
+    }
+
+    private static LuaInvocationResult completeQueuedInvocation(
+            QueuedBuiltinHost host,
+            LuaNodeInstance instance,
+            LuaInvocationResult initial) {
+        LuaInvocationResult result = initial;
+        for (int resumes = 0; result.status() == LuaNodeStatus.YIELDED; resumes++) {
+            if (resumes >= 16) {
+                throw new AssertionError("Bundled node exceeded the expected endpoint dispatch count");
+            }
+            assertTrue(host.hasTasks(), "Yielded node did not queue a server endpoint");
+            host.runNext();
+            result = instance.resumeIfReady();
+        }
+        return result;
+    }
+
+    private static final class QueuedBuiltinHost
+            implements BuiltinEndpointHost, ServerEndpointExecutor {
+        private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+        private final List<Integer> redstoneLevels = new ArrayList<>();
+        private final List<String> monitorTargets = new ArrayList<>();
+        private final List<List<BuiltinWidget>> monitorWidgets = new ArrayList<>();
+        private String redstoneThread;
+
+        @Override
+        public double worldTime() {
+            return 6000;
+        }
+
+        @Override
+        public void redstoneOutput(String face, int level) {
+            redstoneThread = Thread.currentThread().getName();
+            redstoneLevels.add(level);
+        }
+
+        @Override
+        public void showWidgets(String target, List<BuiltinWidget> widgets) {
+            monitorTargets.add(target);
+            monitorWidgets.add(widgets);
+        }
+
+        @Override
+        public void runCommand(String command) {}
+
+        @Override
+        public CompletionStage<EndpointResult> submitServerEndpoint(
+                Callable<EndpointResult> endpointCall) {
+            CompletableFuture<EndpointResult> result = new CompletableFuture<>();
+            synchronized (tasks) {
+                tasks.addLast(() -> {
+                    try {
+                        result.complete(endpointCall.call());
+                    } catch (Exception exception) {
+                        result.completeExceptionally(exception);
+                    }
+                });
+            }
+            return result;
+        }
+
+        boolean hasTasks() {
+            synchronized (tasks) {
+                return !tasks.isEmpty();
+            }
+        }
+
+        void runNext() {
+            Runnable task;
+            synchronized (tasks) {
+                task = tasks.removeFirst();
+            }
+            task.run();
+        }
     }
 }

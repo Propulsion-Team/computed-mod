@@ -5,7 +5,9 @@ import dev.propulsionteam.computed.lua.sandbox.LuaSandbox;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import org.luaj.vm2.LuaValue;
@@ -77,9 +79,27 @@ final class PendingLuaInvocation {
 
     Varargs resume() {
         CompletableFuture<EndpointResult.Immediate> future = continuation.toCompletableFuture();
-        EndpointResult.Immediate result = future.join();
-        continuation = null;
-        return worker.resume(result.values());
+        try {
+            EndpointResult.Immediate result = future.join();
+            continuation = null;
+            return worker.resume(result.values());
+        } catch (CancellationException exception) {
+            continuation = null;
+            throw new org.luaj.vm2.LuaError("Endpoint call was cancelled");
+        } catch (CompletionException exception) {
+            continuation = null;
+            Throwable cause = exception.getCause();
+            if (cause instanceof org.luaj.vm2.LuaError luaError) {
+                throw luaError;
+            }
+            if (cause instanceof CancellationException) {
+                throw new org.luaj.vm2.LuaError("Endpoint call was cancelled");
+            }
+            String message = cause == null || cause.getMessage() == null
+                    ? "Endpoint call failed"
+                    : "Endpoint call failed: " + cause.getMessage();
+            throw new org.luaj.vm2.LuaError(message);
+        }
     }
 
     void yieldFor(CompletionStage<EndpointResult.Immediate> continuation) {

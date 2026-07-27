@@ -106,7 +106,7 @@ public final class ComputerCraftIntegration {
         ComputedEndpoints.register("computercraft:peripheral", endpoint -> endpoint.method(
                         "methods",
                         EndpointSignature.of(List.of(), List.of(EndpointType.TABLE)),
-                        EndpointPolicy.computerThread(false, false),
+                        EndpointPolicy.serverThread(false, false),
                         ComputerCraftIntegration::peripheralMethods,
                         null,
                         "Lists methods exposed by the adjacent CC peripheral.")
@@ -116,11 +116,7 @@ public final class ComputerCraftIntegration {
                                 List.of(EndpointType.STRING),
                                 List.of(EndpointType.TABLE),
                                 true),
-                        new EndpointPolicy(
-                                EndpointPolicy.ExecutionSide.SERVER_THREAD,
-                                true,
-                                true,
-                                false),
+                        EndpointPolicy.serverThread(true, false),
                         ComputerCraftIntegration::callPeripheral,
                         null,
                         "Calls an adjacent CC peripheral method and resumes yielded results."));

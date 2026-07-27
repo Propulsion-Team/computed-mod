@@ -19,6 +19,8 @@ import dev.propulsionteam.computed.graph.GraphNode;
 import dev.propulsionteam.computed.graph.LuaGraphScheduler;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
+import dev.propulsionteam.computed.lua.endpoint.EndpointResult;
+import dev.propulsionteam.computed.lua.endpoint.ServerEndpointExecutor;
 import dev.propulsionteam.computed.menu.ComputerPeripheralMenu;
 import dev.propulsionteam.computed.network.ComputerEditPolicy;
 import dev.propulsionteam.computed.network.ComputedNetworking;
@@ -31,6 +33,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -53,7 +58,8 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
-public class ComputerBlockEntity extends BaseContainerBlockEntity implements BuiltinEndpointHost {
+public class ComputerBlockEntity extends BaseContainerBlockEntity
+        implements BuiltinEndpointHost, ServerEndpointExecutor {
     public static final int CONTAINER_SIZE = 9;
     public static final String PROGRAM_TAG = "ComputedProgram";
 
@@ -338,7 +344,11 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
 
     @Override
     public double worldTime() {
-        return level == null ? 0 : level.getDayTime();
+        if (!(level instanceof ServerLevel serverLevel) || isRemoved()) {
+            return 0;
+        }
+        requireServerThread(serverLevel);
+        return serverLevel.getDayTime();
     }
 
     @Override
@@ -357,42 +367,85 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
 
     @Override
     public int redstoneInput(String face) {
+        if (!(level instanceof ServerLevel serverLevel) || isRemoved()) {
+            return 0;
+        }
+        requireServerThread(serverLevel);
         Direction worldFace = worldFace(face);
-        if (worldFace == null || level == null || level.isClientSide) {
+        if (worldFace == null) {
             return 0;
         }
         BlockPos neighbor = worldPosition.relative(worldFace);
-        return level.getSignal(neighbor, worldFace);
+        return serverLevel.getSignal(neighbor, worldFace);
     }
 
     @Override
     public int comparatorInput(String face) {
+        if (!(level instanceof ServerLevel serverLevel) || isRemoved()) {
+            return 0;
+        }
+        requireServerThread(serverLevel);
         Direction worldFace = worldFace(face);
-        if (worldFace == null || level == null || level.isClientSide) {
+        if (worldFace == null) {
             return 0;
         }
         BlockPos neighbor = worldPosition.relative(worldFace);
-        BlockState target = level.getBlockState(neighbor);
+        BlockState target = serverLevel.getBlockState(neighbor);
         return target.hasAnalogOutputSignal()
-                ? target.getAnalogOutputSignal(level, neighbor)
-                : level.getSignal(neighbor, worldFace);
+                ? target.getAnalogOutputSignal(serverLevel, neighbor)
+                : serverLevel.getSignal(neighbor, worldFace);
     }
 
     @Override
     public boolean blockPresent(String face) {
+        if (!(level instanceof ServerLevel serverLevel) || isRemoved()) {
+            return false;
+        }
+        requireServerThread(serverLevel);
         Direction worldFace = worldFace(face);
         return worldFace != null
-                && level != null
-                && !level.isClientSide
-                && !level.getBlockState(worldPosition.relative(worldFace)).isAir();
+                && !serverLevel.getBlockState(worldPosition.relative(worldFace)).isAir();
     }
 
     @Override
     public void redstoneOutput(String face, int power) {
-        Direction worldFace = worldFace(face);
-        if (worldFace == null || level == null || level.isClientSide) {
+        Level currentLevel = level;
+        if (!(currentLevel instanceof ServerLevel serverLevel) || isRemoved()) {
             return;
         }
+
+        MinecraftServer server = serverLevel.getServer();
+        LuaGraphScheduler expectedScheduler = scheduler;
+        if (!server.isSameThread()) {
+            server.execute(() -> applyRedstoneOutput(
+                    serverLevel,
+                    expectedScheduler,
+                    face,
+                    power));
+            return;
+        }
+
+        applyRedstoneOutput(serverLevel, expectedScheduler, face, power);
+    }
+
+    private void applyRedstoneOutput(
+            ServerLevel expectedLevel,
+            LuaGraphScheduler expectedScheduler,
+            String face,
+            int power) {
+        requireServerThread(expectedLevel);
+        if (isRemoved()
+                || level != expectedLevel
+                || scheduler != expectedScheduler
+                || expectedLevel.getBlockEntity(worldPosition) != this) {
+            return;
+        }
+
+        Direction worldFace = worldFace(face);
+        if (worldFace == null) {
+            return;
+        }
+
         int clamped = net.minecraft.util.Mth.clamp(power, 0, 15);
         if (emittedRedstone[worldFace.ordinal()] == clamped) {
             return;
@@ -412,16 +465,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
 
     @Override
     public void showWidgets(String target, List<BuiltinWidget> definitions) {
-        if (level == null || level.isClientSide) {
+        if (!(level instanceof ServerLevel serverLevel) || isRemoved()) {
             return;
         }
-        MinecraftServer server = level.getServer();
-        if (server != null && !server.isSameThread()) {
-            String queuedTarget = target;
-            List<BuiltinWidget> queuedDefinitions = List.copyOf(definitions);
-            server.execute(() -> applyWidgets(queuedTarget, queuedDefinitions));
-            return;
-        }
+        requireServerThread(serverLevel);
         applyWidgets(target, definitions);
     }
 
@@ -454,12 +501,14 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     public void runCommand(String commandText) {
         if (commandText == null
                 || commandText.isBlank()
-                || !(level instanceof ServerLevel serverLevel)) {
+                || !(level instanceof ServerLevel serverLevel)
+                || isRemoved()) {
             return;
         }
+        requireServerThread(serverLevel);
         MinecraftServer server = serverLevel.getServer();
         String command = commandText.startsWith("/") ? commandText.substring(1) : commandText;
-        if (server == null || command.isBlank()) {
+        if (command.isBlank()) {
             return;
         }
         Vec3 center = Vec3.atCenterOf(worldPosition);
@@ -469,6 +518,41 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
                 .withPermission(4)
                 .withSuppressedOutput();
         server.getCommands().performPrefixedCommand(source, command);
+    }
+
+    @Override
+    public CompletionStage<EndpointResult> submitServerEndpoint(
+            Callable<EndpointResult> endpointCall) {
+        if (!(level instanceof ServerLevel expectedLevel) || isRemoved()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("Computer is not available"));
+        }
+
+        MinecraftServer server = expectedLevel.getServer();
+        LuaGraphScheduler expectedScheduler = scheduler;
+        CompletableFuture<EndpointResult> result = new CompletableFuture<>();
+        try {
+            server.execute(() -> {
+                if (isRemoved()
+                        || level != expectedLevel
+                        || scheduler != expectedScheduler
+                        || expectedLevel.getBlockEntity(worldPosition) != this) {
+                    result.completeExceptionally(
+                            new IllegalStateException(
+                                    "Computer or program changed before endpoint execution"));
+                    return;
+                }
+
+                try {
+                    result.complete(endpointCall.call());
+                } catch (Exception exception) {
+                    result.completeExceptionally(exception);
+                }
+            });
+        } catch (RuntimeException exception) {
+            result.completeExceptionally(exception);
+        }
+        return result;
     }
 
     private LuaGraphScheduler ensureScheduler() {
@@ -562,7 +646,17 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity implements Bui
     }
 
     public Direction worldFaceForEndpoint(String name) {
+        if (level instanceof ServerLevel serverLevel) {
+            requireServerThread(serverLevel);
+        }
         return worldFace(name);
+    }
+
+    private static void requireServerThread(ServerLevel serverLevel) {
+        if (!serverLevel.getServer().isSameThread()) {
+            throw new IllegalStateException(
+                    "Computer world access attempted outside the server thread");
+        }
     }
 
     private Direction worldFace(String name) {
