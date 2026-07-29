@@ -4,11 +4,15 @@ import dev.propulsionteam.computed.lua.endpoint.ComputedEndpoints;
 import dev.propulsionteam.computed.lua.endpoint.EndpointDefinition;
 import dev.propulsionteam.computed.lua.endpoint.EndpointInvocation;
 import dev.propulsionteam.computed.lua.endpoint.EndpointMethod;
+import dev.propulsionteam.computed.lua.endpoint.EndpointPolicy;
 import dev.propulsionteam.computed.lua.endpoint.EndpointResult;
 import dev.propulsionteam.computed.lua.endpoint.EndpointType;
+import dev.propulsionteam.computed.lua.endpoint.ServerEndpointExecutor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import org.luaj.vm2.LuaError;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.LuaValue;
@@ -102,7 +106,12 @@ final class LuaEndpointProxy {
                 if (!method.policy().yielding()) {
                     throw new LuaError("Endpoint returned a continuation but is not declared yielding");
                 }
-                pending.yieldFor(yielded.continuation());
+                CompletionStage<EndpointResult.Immediate> continuation =
+                        yielded.continuation().thenApply(immediate -> {
+                            validateReturns(method, immediate.values());
+                            return immediate;
+                        });
+                pending.yieldFor(continuation);
                 yield pending.sandbox().globals().yield(LuaValue.NIL);
             }
         };
@@ -119,12 +128,42 @@ final class LuaEndpointProxy {
                 }
                 return method.previewFixture().apply(invocation);
             }
+
+            if (method.policy().executionSide() == EndpointPolicy.ExecutionSide.SERVER_THREAD) {
+                return dispatchToServer(method, invocation);
+            }
+
             return method.handler().invoke(invocation);
         } catch (LuaError error) {
             throw error;
         } catch (Exception exception) {
             throw new LuaError("Endpoint call failed: " + exception.getMessage());
         }
+    }
+
+    private static EndpointResult dispatchToServer(
+            EndpointMethod method,
+            EndpointInvocation invocation) {
+        if (!(invocation.host() instanceof ServerEndpointExecutor executor)) {
+            return EndpointResult.unavailable(
+                    "Endpoint host cannot execute server-thread methods");
+        }
+
+        CompletionStage<EndpointResult.Immediate> continuation =
+                executor.submitServerEndpoint(() -> method.handler().invoke(invocation))
+                        .thenCompose(LuaEndpointProxy::flattenServerResult);
+        return EndpointResult.yielded(continuation);
+    }
+
+    private static CompletionStage<EndpointResult.Immediate> flattenServerResult(
+            EndpointResult result) {
+        return switch (result) {
+            case EndpointResult.Immediate immediate ->
+                    CompletableFuture.completedFuture(immediate);
+            case EndpointResult.Yielded yielded -> yielded.continuation();
+            case EndpointResult.Unavailable unavailable ->
+                    CompletableFuture.failedFuture(new LuaError(unavailable.reason()));
+        };
     }
 
     private static void validateArguments(EndpointMethod method, List<LuaValue> arguments) {

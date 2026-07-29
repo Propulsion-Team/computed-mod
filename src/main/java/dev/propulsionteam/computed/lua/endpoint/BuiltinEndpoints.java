@@ -20,7 +20,7 @@ public final class BuiltinEndpoints {
         ComputedEndpoints.register("computed:world", endpoint -> endpoint.method(
                         "time",
                         EndpointSignature.of(List.of(), List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> EndpointResult.immediate(
                                 LuaValue.valueOf(requireHost(invocation).worldTime())),
                         invocation -> EndpointResult.immediate(LuaValue.valueOf(6000)),
@@ -30,7 +30,7 @@ public final class BuiltinEndpoints {
                         EndpointSignature.of(
                                 List.of(),
                                 List.of(EndpointType.NUMBER, EndpointType.NUMBER, EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> numbers(requireHost(invocation).position()),
                         invocation -> numbers(new double[] {0.5, 64.5, 0.5}),
                         "Returns the computer world position.")
@@ -39,14 +39,14 @@ public final class BuiltinEndpoints {
                         EndpointSignature.of(
                                 List.of(),
                                 List.of(EndpointType.NUMBER, EndpointType.NUMBER, EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> numbers(requireHost(invocation).rotation()),
                         invocation -> numbers(new double[] {0, 0, 0}),
                         "Returns the computer rotation in degrees.")
                 .method(
                         "block_present",
                         EndpointSignature.of(List.of(EndpointType.STRING), List.of(EndpointType.BOOLEAN)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> EndpointResult.immediate(LuaValue.valueOf(
                                 requireHost(invocation).blockPresent(argument(invocation, 0)))),
                         invocation -> EndpointResult.immediate(LuaValue.FALSE),
@@ -54,7 +54,7 @@ public final class BuiltinEndpoints {
         ComputedEndpoints.register("computed:redstone", endpoint -> endpoint.method(
                         "input",
                         EndpointSignature.of(List.of(EndpointType.STRING), List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> EndpointResult.immediate(LuaValue.valueOf(
                                 requireHost(invocation).redstoneInput(argument(invocation, 0)))),
                         invocation -> EndpointResult.immediate(LuaValue.ZERO),
@@ -62,7 +62,7 @@ public final class BuiltinEndpoints {
                 .method(
                         "comparator",
                         EndpointSignature.of(List.of(EndpointType.STRING), List.of(EndpointType.NUMBER)),
-                        EndpointPolicy.computerThread(false, true),
+                        EndpointPolicy.serverThread(false, true),
                         invocation -> EndpointResult.immediate(LuaValue.valueOf(
                                 requireHost(invocation).comparatorInput(argument(invocation, 0)))),
                         invocation -> EndpointResult.immediate(LuaValue.ZERO),
@@ -72,7 +72,7 @@ public final class BuiltinEndpoints {
                         EndpointSignature.of(
                                 List.of(EndpointType.STRING, EndpointType.NUMBER),
                                 List.of()),
-                        EndpointPolicy.computerThread(true, false),
+                        EndpointPolicy.serverThread(true, false),
                         invocation -> {
                             requireHost(invocation).redstoneOutput(
                                     argument(invocation, 0),
@@ -84,7 +84,7 @@ public final class BuiltinEndpoints {
         ComputedEndpoints.register("computed:command", endpoint -> endpoint.method(
                 "run",
                 EndpointSignature.of(List.of(EndpointType.STRING), List.of()),
-                EndpointPolicy.computerThread(true, false),
+                EndpointPolicy.serverThread(true, false),
                 invocation -> {
                     BuiltinEndpointHost host = requireHost(invocation);
                     host.runCommand(invocation.arguments().getFirst().tojstring());
@@ -94,16 +94,24 @@ public final class BuiltinEndpoints {
                 "Runs a command through the computer host."));
         ComputedEndpoints.register("computed:widget", endpoint -> endpoint.method(
                         "text",
-                        EndpointSignature.of(List.of(EndpointType.STRING), List.of(EndpointType.TABLE)),
+                        EndpointSignature.of(
+                                List.of(EndpointType.STRING, EndpointType.NUMBER),
+                                List.of(EndpointType.TABLE)),
                         EndpointPolicy.computerThread(false, true),
                         invocation -> EndpointResult.immediate(widget(
                                 invocation.nodeId(),
                                 "text",
-                                Map.of("text", argument(invocation, 0), "alignment", "left"))),
+                                Map.of(
+                                        "text", argument(invocation, 0),
+                                        "color", invocation.arguments().get(1).checkint(),
+                                        "alignment", "left"))),
                         invocation -> EndpointResult.immediate(widget(
                                 invocation.nodeId(),
                                 "text",
-                                Map.of("text", argument(invocation, 0), "alignment", "left"))),
+                                Map.of(
+                                        "text", argument(invocation, 0),
+                                        "color", invocation.arguments().get(1).checkint(),
+                                        "alignment", "left"))),
                         "Creates a text widget value.")
                 .method(
                         "clock",
@@ -153,7 +161,7 @@ public final class BuiltinEndpoints {
         ComputedEndpoints.register("computed:monitor", endpoint -> endpoint.method(
                 "show",
                 EndpointSignature.of(List.of(EndpointType.TABLE), List.of()),
-                EndpointPolicy.computerThread(true, false),
+                EndpointPolicy.serverThread(true, false),
                 invocation -> {
                     requireHost(invocation).showWidgets(
                             invocation.target(),

@@ -6,14 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpointHost;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinWidget;
+import dev.propulsionteam.computed.lua.endpoint.EndpointResult;
+import dev.propulsionteam.computed.lua.endpoint.ServerEndpointExecutor;
 import dev.propulsionteam.computed.lua.node.BundledLuaLibrary;
 import dev.propulsionteam.computed.lua.node.ConnectionType;
 import dev.propulsionteam.computed.lua.runtime.LuaStateCodec;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import org.junit.jupiter.api.Test;
 import org.luaj.vm2.LuaValue;
 
@@ -120,6 +126,9 @@ class LuaGraphSchedulerTest {
         LuaGraphScheduler scheduler = new LuaGraphScheduler(program, uuid(202), host);
 
         assertEquals(6000.0, scheduler.tick(true).outputs().get(nodeId).get("time").todouble());
+        scheduler.tick(false);
+        assertTrue(host.hasTasks());
+        host.runNext();
         assertEquals(18000.0, scheduler.tick(false).outputs().get(nodeId).get("time").todouble());
     }
 
@@ -168,7 +177,14 @@ class LuaGraphSchedulerTest {
                 null);
         Host host = new Host();
 
-        LuaGraphTickResult result = new LuaGraphScheduler(program, uuid(206), host).tick(false);
+        LuaGraphScheduler scheduler = new LuaGraphScheduler(program, uuid(206), host);
+        LuaGraphTickResult yielded = scheduler.tick(false);
+
+        assertTrue(yielded.diagnostics().isEmpty());
+        assertTrue(host.monitorTargets.isEmpty());
+        assertTrue(host.hasTasks());
+        host.runNext();
+        LuaGraphTickResult result = scheduler.tick(false);
 
         assertTrue(result.diagnostics().isEmpty());
         assertEquals(List.of("front"), host.monitorTargets);
@@ -367,7 +383,8 @@ class LuaGraphSchedulerTest {
         return new UUID(0, value);
     }
 
-    private static final class Host implements BuiltinEndpointHost {
+    private static final class Host implements BuiltinEndpointHost, ServerEndpointExecutor {
+        private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
         private final List<String> commands = new ArrayList<>();
         private final List<String> monitorTargets = new ArrayList<>();
         private final List<List<BuiltinWidget>> monitorWidgets = new ArrayList<>();
@@ -386,6 +403,36 @@ class LuaGraphSchedulerTest {
         public void showWidgets(String target, List<BuiltinWidget> widgets) {
             monitorTargets.add(target);
             monitorWidgets.add(widgets);
+        }
+
+        @Override
+        public CompletionStage<EndpointResult> submitServerEndpoint(
+                Callable<EndpointResult> endpointCall) {
+            CompletableFuture<EndpointResult> result = new CompletableFuture<>();
+            synchronized (tasks) {
+                tasks.addLast(() -> {
+                    try {
+                        result.complete(endpointCall.call());
+                    } catch (Exception exception) {
+                        result.completeExceptionally(exception);
+                    }
+                });
+            }
+            return result;
+        }
+
+        boolean hasTasks() {
+            synchronized (tasks) {
+                return !tasks.isEmpty();
+            }
+        }
+
+        void runNext() {
+            Runnable task;
+            synchronized (tasks) {
+                task = tasks.removeFirst();
+            }
+            task.run();
         }
     }
 }
