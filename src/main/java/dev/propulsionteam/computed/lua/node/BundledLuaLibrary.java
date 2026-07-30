@@ -177,10 +177,14 @@ public final class BundledLuaLibrary {
             if (stream == null) {
                 throw new IllegalStateException("Missing bundled Lua definition: " + path);
             }
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            return normalizeLineEndings(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
         } catch (IOException exception) {
             throw new IllegalStateException("Could not read bundled Lua definition: " + path, exception);
         }
+    }
+
+    private static String normalizeLineEndings(String source) {
+        return source.replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private record Entry(String id, String resource) {}

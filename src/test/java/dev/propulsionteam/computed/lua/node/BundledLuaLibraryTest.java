@@ -35,6 +35,7 @@ class BundledLuaLibraryTest {
 
         assertTrue(definitions.size() >= 30);
         definitions.forEach((id, source) -> {
+            assertTrue(!source.source().contains("\r"), id + " contains a carriage return");
             var compiled = compiler.compile(source.apiVersion(), source.source());
             var definition = loader.load(compiled, sandbox);
             assertEquals(id, definition.id());

@@ -1,5 +1,6 @@
 package dev.propulsionteam.computed.client.editor.canvas;
 
+import dev.propulsionteam.computed.client.editor.TextInputHandler;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorStyle;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import dev.propulsionteam.computed.internal.node.client.ui.WNodeScreen;
@@ -25,7 +26,7 @@ final class LuaNodeFieldControl {
 
     private final LuaFieldSchema schema;
     private LuaValue value;
-    private String editBuffer = "";
+    private final TextInputHandler textInput = new TextInputHandler(256);
     private boolean focused;
     private boolean expanded;
     private boolean dragging;
@@ -106,10 +107,12 @@ final class LuaNodeFieldControl {
                 value = LuaValue.valueOf(options.get(option));
                 expanded = false;
                 focused = false;
+                textInput.blur();
                 return true;
             }
             expanded = false;
             focused = false;
+            textInput.blur();
             return true;
         }
         if (button != 0
@@ -120,6 +123,7 @@ final class LuaNodeFieldControl {
             if (focused) {
                 commitBuffer();
                 focused = false;
+                textInput.blur();
                 dragging = false;
                 return true;
             }
@@ -149,12 +153,19 @@ final class LuaNodeFieldControl {
                     BuiltInRegistries.ITEM.getKey(stack.getItem()).toString()));
             return true;
         }
+        if (!focused) {
+            textInput.focus(displayValue());
+        }
         focused = true;
-        editBuffer = displayValue();
+        textInput.click(textPosition(localX, controlX), Screen.hasShiftDown());
         return true;
     }
 
     boolean mouseDragged(double localX, int button, int nodeWidth) {
+        if (focused && !expanded && !dragging && button == 0) {
+            textInput.dragTo(textPosition(localX, nodeWidth - CONTROL_WIDTH - 9));
+            return true;
+        }
         if (!dragging || button != 0) {
             return false;
         }
@@ -177,43 +188,29 @@ final class LuaNodeFieldControl {
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             focused = false;
             expanded = false;
+            textInput.blur();
             return true;
         }
         if (expanded) {
             return true;
         }
-        if (Screen.hasControlDown() && keyCode == GLFW.GLFW_KEY_A) {
-            editBuffer = "";
-            return true;
-        }
-        if (Screen.hasControlDown() && keyCode == GLFW.GLFW_KEY_C) {
-            Minecraft.getInstance().keyboardHandler.setClipboard(editBuffer);
-            return true;
-        }
-        if (Screen.hasControlDown() && keyCode == GLFW.GLFW_KEY_V) {
-            editBuffer += Minecraft.getInstance().keyboardHandler.getClipboard();
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !editBuffer.isEmpty()) {
-            editBuffer = editBuffer.substring(0, editBuffer.length() - 1);
+        if (textInput.keyPressed(keyCode)) {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
             commitBuffer();
             focused = false;
+            textInput.blur();
             return true;
         }
         return true;
     }
 
     boolean charTyped(char character) {
-        if (!focused || expanded || Character.isISOControl(character)) {
+        if (!focused || expanded) {
             return false;
         }
-        if (editBuffer.length() < 256) {
-            editBuffer += character;
-        }
-        return true;
+        return textInput.charTyped(character);
     }
 
     boolean focused() {
@@ -225,6 +222,7 @@ final class LuaNodeFieldControl {
             commitBuffer();
         }
         focused = false;
+        textInput.blur();
         expanded = false;
         dragging = false;
     }
@@ -299,7 +297,7 @@ final class LuaNodeFieldControl {
         if (schema.type() == FieldType.COLOR) {
             graphics.fill(x + 2, y + 2, x + 13, y + 12, (int) (long) value.todouble());
         }
-        String display = focused ? editBuffer + "_" : displayValue();
+        String display = focused ? textInput.text() : displayValue();
         int textX = schema.type() == FieldType.COLOR ? x + 16 : x + 4;
         String visible = Minecraft.getInstance().font.plainSubstrByWidth(
                 display,
@@ -311,6 +309,19 @@ final class LuaNodeFieldControl {
                 y + 3,
                 ComputedEditorTheme.TEXT_PRIMARY,
                 false);
+        if (focused) {
+            int start = Math.min(textInput.selectionStart(), visible.length());
+            int end = Math.min(textInput.selectionEnd(), visible.length());
+            if (start != end) {
+                int startX = textX + Minecraft.getInstance().font.width(visible.substring(0, start));
+                int endX = textX + Minecraft.getInstance().font.width(visible.substring(0, end));
+                graphics.fill(startX, y + 2, endX, y + 12, ComputedEditorTheme.SELECTION_TEXT_BACKGROUND);
+                graphics.drawString(Minecraft.getInstance().font, visible, textX, y + 3, ComputedEditorTheme.TEXT_PRIMARY, false);
+            }
+            int cursor = Math.min(textInput.cursor(), visible.length());
+            int cursorX = textX + Minecraft.getInstance().font.width(visible.substring(0, cursor));
+            graphics.vLine(cursorX, y + 2, y + 11, ComputedEditorTheme.TEXT_HEADER);
+        }
     }
 
     private void renderDropdownOverlay(
@@ -369,13 +380,13 @@ final class LuaNodeFieldControl {
     private void commitBuffer() {
         try {
             LuaValue parsed = switch (schema.type()) {
-                case NUMBER -> LuaValue.valueOf(Double.parseDouble(editBuffer.replace(',', '.')));
-                case COLOR -> LuaValue.valueOf((double) parseColor(editBuffer));
-                default -> LuaValue.valueOf(editBuffer);
+                case NUMBER -> LuaValue.valueOf(Double.parseDouble(textInput.text().replace(',', '.')));
+                case COLOR -> LuaValue.valueOf((double) parseColor(textInput.text()));
+                default -> LuaValue.valueOf(textInput.text());
             };
             value = LuaFieldValues.normalize(schema, parsed);
         } catch (RuntimeException ignored) {
-            editBuffer = displayValue();
+            textInput.setText(displayValue());
         }
     }
 
@@ -385,6 +396,21 @@ final class LuaNodeFieldControl {
             case COLOR -> String.format(Locale.ROOT, "%08X", (long) value.todouble());
             default -> value.tojstring();
         };
+    }
+
+    private int textPosition(double localX, int controlX) {
+        int textX = controlX + (schema.type() == FieldType.COLOR ? 16 : 4);
+        String text = textInput.text();
+        int relative = (int) localX - textX;
+        int width = 0;
+        for (int index = 0; index < text.length(); index++) {
+            int characterWidth = Minecraft.getInstance().font.width(text.substring(index, index + 1));
+            if (relative < width + characterWidth / 2) {
+                return index;
+            }
+            width += characterWidth;
+        }
+        return text.length();
     }
 
     private List<String> options() {

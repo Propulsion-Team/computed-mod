@@ -5,6 +5,7 @@ import dev.propulsionteam.computed.client.editor.canvas.LuaEditorNode;
 import dev.propulsionteam.computed.client.editor.explorer.ExplorerNode;
 import dev.propulsionteam.computed.client.editor.explorer.ExplorerRow;
 import dev.propulsionteam.computed.client.editor.explorer.NodeExplorerModel;
+import dev.propulsionteam.computed.client.editor.TextInputHandler;
 import dev.propulsionteam.computed.client.editor.lua.LuaNodeStarter;
 import dev.propulsionteam.computed.content.blocks.ComputerBlockEntity;
 import dev.propulsionteam.computed.graph.ComputedProgramV3;
@@ -54,6 +55,7 @@ public class ComputerEditorScreen extends WNodeScreen {
     private boolean explorerOpen = true;
     private boolean explorerSearchFocused;
     private String explorerSearch = "";
+    private final TextInputHandler explorerSearchInput = new TextInputHandler(64);
     private int explorerAnchorX;
     private int explorerAnchorY;
     private int explorerScroll;
@@ -186,6 +188,7 @@ public class ComputerEditorScreen extends WNodeScreen {
         if (explorerSearchFocused
                 && !contains(mouseX, mouseY, 6, 27, EXPLORER_WIDTH - 12, 16)) {
             explorerSearchFocused = false;
+            explorerSearchInput.blur();
         }
         if (button == 0 && handleControlsClick(mouseX, mouseY)) {
             return true;
@@ -206,6 +209,10 @@ public class ComputerEditorScreen extends WNodeScreen {
             int button,
             double dragX,
             double dragY) {
+        if (button == 0 && explorerOpen && explorerSearchFocused) {
+            explorerSearchInput.dragTo(searchColumn(mouseX));
+            return true;
+        }
         if (button == 0 && explorerPressNode != null) {
             if (Math.hypot(mouseX - explorerPressX, mouseY - explorerPressY) >= 4) {
                 explorerDragging = true;
@@ -268,31 +275,14 @@ public class ComputerEditorScreen extends WNodeScreen {
         if (explorerOpen && explorerSearchFocused) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
                 explorerSearchFocused = false;
+                explorerSearchInput.blur();
                 return true;
             }
-            if (keyCode == GLFW.GLFW_KEY_BACKSPACE) {
-                if (!explorerSearch.isEmpty()) {
-                    explorerSearch = explorerSearch.substring(0, explorerSearch.length() - 1);
-                    explorer.search(explorerSearch);
-                    explorerScroll = 0;
-                }
+            if (explorerSearchInput.keyPressed(keyCode)) {
+                updateExplorerSearch();
                 return true;
             }
-            if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
-                explorer.moveSelection(keyCode == GLFW.GLFW_KEY_UP ? -1 : 1);
-                return true;
-            }
-            if (keyCode == GLFW.GLFW_KEY_ENTER) {
-                ExplorerRow selected = explorer.selected();
-                if (selected != null) {
-                    if (selected.folder()) {
-                        explorer.toggleSelected();
-                    } else {
-                        place(selected.node());
-                    }
-                }
-                return true;
-            }
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
@@ -304,11 +294,8 @@ public class ComputerEditorScreen extends WNodeScreen {
         }
         if (explorerOpen
                 && explorerSearchFocused
-                && !Character.isISOControl(codePoint)
-                && explorerSearch.length() < 64) {
-            explorerSearch += codePoint;
-            explorer.search(explorerSearch);
-            explorerScroll = 0;
+                && explorerSearchInput.charTyped(codePoint)) {
+            updateExplorerSearch();
             return true;
         }
         return super.charTyped(codePoint, modifiers);
@@ -384,6 +371,7 @@ public class ComputerEditorScreen extends WNodeScreen {
         replaceCanvasGraph(editorGraph);
         explorer = new NodeExplorerModel(explorerNodes(baseProgram));
         explorerSearch = "";
+        explorerSearchInput.setText("");
         explorer.search("");
         explorerScroll = 0;
         acknowledgedEditorRevision = -1;
@@ -467,7 +455,7 @@ public class ComputerEditorScreen extends WNodeScreen {
                 && (System.currentTimeMillis() / 500) % 2 == 0;
         String searchText = explorerSearch.isEmpty() && !explorerSearchFocused
                 ? "Search nodes"
-                : explorerSearch + (cursorVisible ? "_" : "");
+                : explorerSearch;
         graphics.drawString(
                 font,
                 searchText,
@@ -477,6 +465,20 @@ public class ComputerEditorScreen extends WNodeScreen {
                         ? ComputedEditorTheme.TEXT_TERTIARY
                         : ComputedEditorTheme.TEXT_PRIMARY,
                 false);
+        if (explorerSearchFocused) {
+            int start = explorerSearchInput.selectionStart();
+            int end = explorerSearchInput.selectionEnd();
+            if (start != end) {
+                int startX = 11 + font.width(explorerSearch.substring(0, start));
+                int endX = 11 + font.width(explorerSearch.substring(0, end));
+                graphics.fill(startX, 29, endX, 41, ComputedEditorTheme.SELECTION_TEXT_BACKGROUND);
+                graphics.drawString(font, explorerSearch, 11, 31, ComputedEditorTheme.TEXT_PRIMARY, false);
+            }
+            if (cursorVisible) {
+                int cursorX = 11 + font.width(explorerSearch.substring(0, explorerSearchInput.cursor()));
+                graphics.vLine(cursorX, 29, 40, ComputedEditorTheme.TEXT_HEADER);
+            }
+        }
         List<ExplorerRow> rows = explorer.visibleRows();
         int visible = Math.max(1, (height - 45) / EXPLORER_ROW_HEIGHT);
         explorerScroll = net.minecraft.util.Mth.clamp(
@@ -569,6 +571,7 @@ public class ComputerEditorScreen extends WNodeScreen {
         if (contains(mouseX, mouseY, 6, 6, 22, 18)) {
             explorerOpen = !explorerOpen;
             explorerSearchFocused = false;
+            explorerSearchInput.blur();
             return true;
         }
         if (contains(mouseX, mouseY, width - 54, 6, 22, 18)) {
@@ -586,6 +589,10 @@ public class ComputerEditorScreen extends WNodeScreen {
         if (contains(mouseX, mouseY, 6, 27, EXPLORER_WIDTH - 12, 16)) {
             if (button == 0) {
                 explorerSearchFocused = true;
+                if (!explorerSearchInput.focused()) {
+                    explorerSearchInput.focus(explorerSearch);
+                }
+                explorerSearchInput.click(searchColumn(mouseX), hasShiftDown());
             }
             return true;
         }
@@ -612,7 +619,14 @@ public class ComputerEditorScreen extends WNodeScreen {
         } else if (!row.folder() && row.node().available() && button == 1) {
             LuaDefinitionSource source = LuaEditorGraphAdapter.definitions(baseProgram).get(row.node().id());
             if (source != null) {
-                minecraft.setScreen(new LuaNodeEditorScreen(this, baseProgram, source.source()));
+                minecraft.setScreen(new LuaNodeEditorScreen(
+                        this,
+                        baseProgram,
+                        source.source(),
+                        source.origin(),
+                        false,
+                        0,
+                        0));
             }
         } else if (!row.folder() && row.node().available() && button == 0) {
             explorerPressNode = row.node();
@@ -708,6 +722,25 @@ public class ComputerEditorScreen extends WNodeScreen {
                 true,
                 x,
                 y));
+    }
+
+    private int searchColumn(double mouseX) {
+        int relative = (int) mouseX - 11;
+        int width = 0;
+        for (int index = 0; index < explorerSearch.length(); index++) {
+            int characterWidth = font.width(explorerSearch.substring(index, index + 1));
+            if (relative < width + characterWidth / 2) {
+                return index;
+            }
+            width += characterWidth;
+        }
+        return explorerSearch.length();
+    }
+
+    private void updateExplorerSearch() {
+        explorerSearch = explorerSearchInput.text();
+        explorer.search(explorerSearch);
+        explorerScroll = 0;
     }
 
     private static void drawButton(

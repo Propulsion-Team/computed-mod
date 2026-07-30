@@ -38,7 +38,7 @@ Use endpoints for Minecraft or addon access. Lua values never contain Java or Mi
 
 ## Create a node in a computer
 
-Open the Node Explorer, expand **User Nodes**, and choose **New Lua Node…**. The editor starts with a unique reusable `user:node_<id>` definition. Edit and preview the source, then choose **Apply**. Computed adds the validated definition to that computer's embedded library and places its first instance at the canvas anchor. Additional instances appear under **User Nodes** and can be placed like bundled nodes.
+Open the Node Explorer, expand **User Nodes**, and choose **New Lua Node…**. The editor starts with a unique reusable `user:node_<id>` definition. Edit and preview the source, then choose **Save**. Computed adds the validated definition to that computer's embedded library and places its first instance at the canvas anchor. Additional instances appear under **User Nodes** and can be placed like bundled nodes.
 
 Right-click an existing definition in the explorer to edit it. Replacing a definition with the same ID requires confirmation when its source hash changes.
 

@@ -11,8 +11,6 @@ import dev.propulsionteam.computed.graph.LuaDefinitionSource;
 import dev.propulsionteam.computed.internal.node.client.editor.ComputedEditorTheme;
 import dev.propulsionteam.computed.lua.endpoint.BuiltinEndpoints;
 import dev.propulsionteam.computed.lua.node.LuaNodeDefinition;
-import dev.propulsionteam.computed.lua.node.LuaDefinitionFiles;
-import dev.propulsionteam.computed.persistence.LuaDefinitionClipboard;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,11 +59,14 @@ public final class LuaNodeEditorScreen extends Screen {
     private final boolean creationMode;
     private final int placementX;
     private final int placementY;
+    private final boolean editable;
     private final LuaEditorSession session = new LuaEditorSession();
     private final Map<String, LuaValue> sampleInputs = new LinkedHashMap<>();
     private final Map<String, LuaValue> sampleFields = new LinkedHashMap<>();
     private String source;
     private int cursor;
+    private int selectionAnchor;
+    private long cursorBlinkStartedAt = System.currentTimeMillis();
     private int firstLine;
     private int horizontalScroll;
     private boolean revealCursor = true;
@@ -81,13 +82,12 @@ public final class LuaNodeEditorScreen extends Screen {
     private LuaLivePreview preview;
     private LuaEditorNode previewNode;
     private LuaNodeDefinition previewDefinition;
-    private String fileDefinitionId = "";
 
     public LuaNodeEditorScreen(
             ComputerEditorScreen parent,
             ComputedProgramV3 program,
             String source) {
-        this(parent, program, source, false, 0, 0);
+        this(parent, program, source, LuaDefinitionSource.Origin.EMBEDDED, false, 0, 0);
     }
 
     public LuaNodeEditorScreen(
@@ -97,14 +97,27 @@ public final class LuaNodeEditorScreen extends Screen {
             boolean creationMode,
             int placementX,
             int placementY) {
+        this(parent, program, source, LuaDefinitionSource.Origin.EMBEDDED, creationMode, placementX, placementY);
+    }
+
+    public LuaNodeEditorScreen(
+            ComputerEditorScreen parent,
+            ComputedProgramV3 program,
+            String source,
+            LuaDefinitionSource.Origin origin,
+            boolean creationMode,
+            int placementX,
+            int placementY) {
         super(Component.literal("Lua Node Editor"));
         this.parent = parent;
         this.program = program;
         this.creationMode = creationMode;
         this.placementX = placementX;
         this.placementY = placementY;
+        editable = origin == LuaDefinitionSource.Origin.EMBEDDED;
         this.source = source == null ? "" : source;
         cursor = this.source.length();
+        selectionAnchor = cursor;
         highlightedLines = LuaSyntaxHighlighter.highlight(this.source);
         BuiltinEndpoints.register();
         session.sourceChanged(this.source, net.minecraft.Util.getMillis() - LuaEditorSession.DEBOUNCE_MILLIS);
@@ -158,29 +171,14 @@ public final class LuaNodeEditorScreen extends Screen {
             revealCursor = false;
             return true;
         }
-        if (contains(mouseX, mouseY, divider - 292, 5, 42, 18)) {
-            minecraft.keyboardHandler.setClipboard(source);
-            status = "Lua source copied";
+        if (contains(mouseX, mouseY, width - 82, 5, 54, 18)) {
+            if (editable) {
+                apply();
+            }
             return true;
         }
-        if (contains(mouseX, mouseY, divider - 247, 5, 42, 18)) {
-            loadClipboard();
-            return true;
-        }
-        if (contains(mouseX, mouseY, divider - 202, 5, 42, 18)) {
-            exportFile();
-            return true;
-        }
-        if (contains(mouseX, mouseY, divider - 157, 5, 42, 18)) {
-            importFile();
-            return true;
-        }
-        if (contains(mouseX, mouseY, divider - 112, 5, 50, 18)) {
-            resetPreview();
-            return true;
-        }
-        if (contains(mouseX, mouseY, divider - 59, 5, 53, 18)) {
-            apply();
+        if (contains(mouseX, mouseY, width - 23, 5, 18, 18)) {
+            onClose();
             return true;
         }
         if (contains(mouseX, mouseY, 0, 26, divider, Math.max(0, height - 41))) {
@@ -189,11 +187,11 @@ public final class LuaNodeEditorScreen extends Screen {
             int line = firstLine + Math.max(0, ((int) mouseY - 31) / 11);
             String[] lines = source.split("\n", -1);
             int clampedLine = Mth.clamp(line, 0, Math.max(0, lines.length - 1));
-            cursor = offsetAtLine(
+            setCursor(offsetAtLine(
                     clampedLine,
                     columnAtPixel(
                             lines[clampedLine],
-                            (int) mouseX - SOURCE_TEXT_X + horizontalScroll));
+                            (int) mouseX - SOURCE_TEXT_X + horizontalScroll)), hasShiftDown());
             revealCursor = false;
             return true;
         }
@@ -245,6 +243,18 @@ public final class LuaNodeEditorScreen extends Screen {
             revealCursor = false;
             return true;
         }
+        int divider = Math.max(300, width * 3 / 5);
+        if (button == 0 && contains(mouseX, mouseY, 0, 26, divider, Math.max(0, height - 41))) {
+            String[] lines = source.split("\\n", -1);
+            int line = firstLine + Math.max(0, ((int) mouseY - SOURCE_TEXT_Y) / SOURCE_LINE_HEIGHT);
+            int clampedLine = Mth.clamp(line, 0, Math.max(0, lines.length - 1));
+            cursor = offsetAtLine(
+                    clampedLine,
+                    columnAtPixel(lines[clampedLine], (int) mouseX - SOURCE_TEXT_X + horizontalScroll));
+            resetCursorBlink();
+            revealCursor = false;
+            return true;
+        }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
@@ -275,7 +285,7 @@ public final class LuaNodeEditorScreen extends Screen {
             apply();
             return true;
         }
-        if (hasControlDown() && keyCode == GLFW.GLFW_KEY_SPACE) {
+        if (editable && hasControlDown() && keyCode == GLFW.GLFW_KEY_SPACE) {
             completionOpen = true;
             completionIndex = 0;
             return true;
@@ -286,67 +296,90 @@ public final class LuaNodeEditorScreen extends Screen {
                     COMPLETIONS.size());
             return true;
         }
-        if (completionOpen && keyCode == GLFW.GLFW_KEY_ENTER) {
+        if (editable && completionOpen && keyCode == GLFW.GLFW_KEY_ENTER) {
             insert(COMPLETIONS.get(completionIndex));
             completionOpen = false;
             return true;
         }
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_A) {
+            selectionAnchor = 0;
             cursor = source.length();
+            resetCursorBlink();
             revealCursor = true;
             return true;
         }
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_C) {
-            minecraft.keyboardHandler.setClipboard(source);
+            if (hasSelection()) {
+                minecraft.keyboardHandler.setClipboard(source.substring(selectionStart(), selectionEnd()));
+            }
             return true;
         }
-        if (hasControlDown() && keyCode == GLFW.GLFW_KEY_V) {
+        if (hasControlDown() && keyCode == GLFW.GLFW_KEY_X) {
+            if (editable && hasSelection()) {
+                minecraft.keyboardHandler.setClipboard(source.substring(selectionStart(), selectionEnd()));
+                replaceSelection("");
+            }
+            return true;
+        }
+        if (editable && hasControlDown() && keyCode == GLFW.GLFW_KEY_V) {
             insert(minecraft.keyboardHandler.getClipboard());
             return true;
         }
+        boolean extendSelection = hasShiftDown();
         if (keyCode == GLFW.GLFW_KEY_LEFT) {
-            cursor = Math.max(0, cursor - 1);
+            setCursor(Math.max(0, cursor - 1), extendSelection);
             revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_RIGHT) {
-            cursor = Math.min(source.length(), cursor + 1);
+            setCursor(Math.min(source.length(), cursor + 1), extendSelection);
             revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
             moveVertical(keyCode == GLFW.GLFW_KEY_UP ? -1 : 1);
+            if (!extendSelection) {
+                selectionAnchor = cursor;
+            }
+            resetCursorBlink();
             revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_HOME) {
-            cursor = lineStart(cursor);
+            setCursor(lineStart(cursor), extendSelection);
             revealCursor = true;
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_END) {
-            cursor = lineEnd(cursor);
+            setCursor(lineEnd(cursor), extendSelection);
             revealCursor = true;
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && cursor > 0) {
-            source = source.substring(0, cursor - 1) + source.substring(cursor);
-            cursor--;
-            changed();
+        if (editable && keyCode == GLFW.GLFW_KEY_BACKSPACE && (hasSelection() || cursor > 0)) {
+            if (hasSelection()) {
+                replaceSelection("");
+            } else {
+                selectionAnchor = cursor - 1;
+                replaceSelection("");
+            }
             revealCursor = true;
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_DELETE && cursor < source.length()) {
-            source = source.substring(0, cursor) + source.substring(cursor + 1);
-            changed();
+        if (editable && keyCode == GLFW.GLFW_KEY_DELETE && (hasSelection() || cursor < source.length())) {
+            if (hasSelection()) {
+                replaceSelection("");
+            } else {
+                selectionAnchor = cursor + 1;
+                replaceSelection("");
+            }
             revealCursor = true;
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_ENTER) {
+        if (editable && keyCode == GLFW.GLFW_KEY_ENTER) {
             insert("\n" + indentation());
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_TAB) {
+        if (editable && keyCode == GLFW.GLFW_KEY_TAB) {
             insert("    ");
             return true;
         }
@@ -355,7 +388,8 @@ public final class LuaNodeEditorScreen extends Screen {
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
-        if (sourceFocused
+        if (editable
+                && sourceFocused
                 && !Character.isISOControl(codePoint)
                 && source.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < 65_536) {
             insert(Character.toString(codePoint));
@@ -372,22 +406,18 @@ public final class LuaNodeEditorScreen extends Screen {
     private void renderHeader(GuiGraphics graphics, int divider, int mouseX, int mouseY) {
         graphics.fill(0, 0, width, 26, ComputedEditorTheme.BACKGROUND_SECONDARY);
         graphics.hLine(0, width, 25, ComputedEditorTheme.BORDER_MENU);
-        graphics.drawString(font, "Lua Source", 8, 9, ComputedEditorTheme.TEXT_HEADER, false);
-        button(graphics, divider - 292, 5, 42, "Copy", mouseX, mouseY, false);
-        button(graphics, divider - 247, 5, 42, "Paste", mouseX, mouseY, false);
-        button(graphics, divider - 202, 5, 42, "Save", mouseX, mouseY, false);
-        button(graphics, divider - 157, 5, 42, "File", mouseX, mouseY, false);
-        button(graphics, divider - 112, 5, 50, "Reset", mouseX, mouseY, false);
+        graphics.drawString(font, "Lua Editor", 8, 9, ComputedEditorTheme.TEXT_HEADER, false);
         button(
                 graphics,
-                divider - 59,
+                width - 82,
                 5,
-                53,
-                replacementConfirmation ? "Replace" : "Apply",
+                54,
+                replacementConfirmation ? "Replace" : "Save",
                 mouseX,
                 mouseY,
-                replacementConfirmation);
-        graphics.drawString(font, "Live Preview", divider + 8, 9, ComputedEditorTheme.TEXT_HEADER, false);
+                replacementConfirmation,
+                editable);
+        button(graphics, width - 23, 5, 18, "×", mouseX, mouseY, false, true);
     }
 
     private void renderSource(GuiGraphics graphics, int divider) {
@@ -407,12 +437,15 @@ public final class LuaNodeEditorScreen extends Screen {
                 lineIndex < Math.min(lines.length, firstLine + visible);
                 lineIndex++) {
             int y = SOURCE_TEXT_Y + (lineIndex - firstLine) * SOURCE_LINE_HEIGHT;
+            if (sourceFocused && !hasSelection() && lineIndex == cursorLine) {
+                graphics.fill(0, y - 1, divider - 10, y + 10, ComputedEditorTheme.MENU_SELECTED);
+            }
             graphics.drawString(
                     font,
                     Integer.toString(lineIndex + 1),
                     4,
                     y,
-                    lineIndex == cursorLine
+                    lineHasCaretOrSelection(lineIndex, lines[lineIndex])
                             ? ComputedEditorTheme.ACCENT
                             : ComputedEditorTheme.TEXT_TERTIARY,
                     false);
@@ -424,6 +457,7 @@ public final class LuaNodeEditorScreen extends Screen {
             int y = SOURCE_TEXT_Y + (lineIndex - firstLine) * SOURCE_LINE_HEIGHT;
             String line = lines[lineIndex];
             int x = SOURCE_TEXT_X - horizontalScroll;
+            renderSelection(graphics, lineIndex, line, x, y);
             List<LuaSyntaxHighlighter.Span> spans = lineIndex < highlightedLines.size()
                     ? highlightedLines.get(lineIndex)
                     : List.of(new LuaSyntaxHighlighter.Span(line, LuaSyntaxHighlighter.DEFAULT));
@@ -433,7 +467,7 @@ public final class LuaNodeEditorScreen extends Screen {
             }
             if (sourceFocused
                     && lineIndex == cursorLine
-                    && (System.currentTimeMillis() / 500) % 2 == 0) {
+                    && cursorVisible()) {
                 int cursorX = SOURCE_TEXT_X
                         - horizontalScroll
                         + font.width(line.substring(0, Math.min(cursorColumn, line.length())));
@@ -586,7 +620,6 @@ public final class LuaNodeEditorScreen extends Screen {
             return;
         }
         previewDefinition = snapshot.currentDefinition();
-        fileDefinitionId = previewDefinition.id();
         sampleInputs.clear();
         previewDefinition.inputs().forEach(input -> sampleInputs.put(input.id(), input.defaultValue()));
         sampleFields.clear();
@@ -618,10 +651,13 @@ public final class LuaNodeEditorScreen extends Screen {
     }
 
     private void apply() {
+        if (!editable) {
+            return;
+        }
         var snapshot = session.snapshot();
         LuaNodeDefinition definition = snapshot.currentDefinition();
         if (definition == null) {
-            status = "Fix diagnostics before applying";
+            status = "Fix diagnostics before saving";
             return;
         }
         LuaDefinitionSource replacement = LuaDefinitionSource.embedded(1, definition.id(), source);
@@ -639,23 +675,8 @@ public final class LuaNodeEditorScreen extends Screen {
                 creationMode,
                 placementX,
                 placementY);
-        status = "Applied; awaiting authoritative autosave";
+        status = "Saved; awaiting authoritative autosave";
         minecraft.setScreen(parent);
-    }
-
-    private void resetPreview() {
-        if (preview == null) {
-            return;
-        }
-        try {
-            preview.reset(source);
-            sampleInputs.forEach(preview::setInput);
-            sampleFields.forEach(preview::setField);
-            preview.run();
-            status = "Preview state reset";
-        } catch (RuntimeException exception) {
-            status = "Reset failed: " + exception.getMessage();
-        }
     }
 
     private boolean handleSampleClick(double mouseX, double mouseY, int divider) {
@@ -696,67 +717,78 @@ public final class LuaNodeEditorScreen extends Screen {
         return false;
     }
 
-    private void replaceSource(String replacement) {
-        source = replacement == null ? "" : replacement;
-        cursor = source.length();
-        firstLine = 0;
-        horizontalScroll = 0;
-        revealCursor = true;
-        changed();
-    }
-
-    private void loadClipboard() {
-        try {
-            replaceSource(LuaDefinitionClipboard.importSource(minecraft.keyboardHandler.getClipboard()));
-            status = "Lua source loaded from clipboard";
-        } catch (IllegalArgumentException exception) {
-            status = exception.getMessage();
-        }
-    }
-
-    private void exportFile() {
-        var snapshot = session.snapshot();
-        LuaNodeDefinition definition = snapshot.currentDefinition();
-        if (definition == null) {
-            status = "Fix diagnostics before exporting";
-            return;
-        }
-        try {
-            var sourceDefinition = LuaDefinitionSource.embedded(1, definition.id(), source);
-            var path = LuaDefinitionFiles.export(
-                    net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get(),
-                    sourceDefinition);
-            fileDefinitionId = definition.id();
-            status = "Saved " + path.getFileName();
-        } catch (java.io.IOException | RuntimeException exception) {
-            status = "File export failed: " + exception.getMessage();
-        }
-    }
-
-    private void importFile() {
-        if (fileDefinitionId.isBlank()) {
-            status = "Compile a definition before loading its file";
-            return;
-        }
-        String fileName = fileDefinitionId.replace(':', '_').replace('/', '_') + ".lua";
-        try {
-            replaceSource(LuaDefinitionFiles.importSource(
-                    net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get(),
-                    fileName));
-            status = "Loaded " + fileName;
-        } catch (java.io.IOException | RuntimeException exception) {
-            status = "File import failed: " + exception.getMessage();
-        }
-    }
-
     private void insert(String text) {
-        if (text == null || text.isEmpty()) {
+        if (!editable || text == null || text.isEmpty()) {
             return;
         }
-        source = source.substring(0, cursor) + text + source.substring(cursor);
-        cursor += text.length();
+        replaceSelection(text);
+    }
+
+    private void replaceSelection(String replacement) {
+        int start = selectionStart();
+        int end = selectionEnd();
+        source = source.substring(0, start) + replacement + source.substring(end);
+        cursor = start + replacement.length();
+        selectionAnchor = cursor;
+        resetCursorBlink();
         changed();
         revealCursor = true;
+    }
+
+    private boolean hasSelection() {
+        return cursor != selectionAnchor;
+    }
+
+    private int selectionStart() {
+        return Math.min(cursor, selectionAnchor);
+    }
+
+    private int selectionEnd() {
+        return Math.max(cursor, selectionAnchor);
+    }
+
+    private void setCursor(int position, boolean extending) {
+        cursor = Mth.clamp(position, 0, source.length());
+        if (!extending) {
+            selectionAnchor = cursor;
+        }
+        resetCursorBlink();
+    }
+
+    private void resetCursorBlink() {
+        cursorBlinkStartedAt = System.currentTimeMillis();
+    }
+
+    private boolean cursorVisible() {
+        return (System.currentTimeMillis() - cursorBlinkStartedAt) / 500 % 2 == 0;
+    }
+
+    private boolean lineHasCaretOrSelection(int lineIndex, String line) {
+        if (lineIndex == lineOf(cursor)) {
+            return true;
+        }
+        if (!hasSelection()) {
+            return false;
+        }
+        int start = offsetAtLine(lineIndex, 0);
+        int end = start + line.length();
+        return start < selectionEnd() && selectionStart() <= end;
+    }
+
+    private void renderSelection(GuiGraphics graphics, int lineIndex, String line, int x, int y) {
+        if (!hasSelection()) {
+            return;
+        }
+        int lineStart = offsetAtLine(lineIndex, 0);
+        int lineEnd = lineStart + line.length();
+        int start = Math.max(selectionStart(), lineStart);
+        int end = Math.min(selectionEnd(), lineEnd);
+        if (start >= end) {
+            return;
+        }
+        int startX = x + font.width(line.substring(0, start - lineStart));
+        int endX = x + font.width(line.substring(0, end - lineStart));
+        graphics.fill(startX, y - 1, endX, y + 10, ComputedEditorTheme.SELECTION_TEXT_BACKGROUND);
     }
 
     private void changed() {
@@ -1138,9 +1170,12 @@ public final class LuaNodeEditorScreen extends Screen {
             String label,
             int mouseX,
             int mouseY,
-            boolean danger) {
+            boolean danger,
+            boolean enabled) {
         boolean hovered = contains(mouseX, mouseY, x, y, width, 18);
-        int color = danger
+        int color = !enabled
+                ? ComputedEditorTheme.BACKGROUND_TERTIARY
+                : danger
                 ? hovered ? ComputedEditorTheme.DANGER_HOVER : ComputedEditorTheme.DANGER_BACKGROUND
                 : hovered ? ComputedEditorTheme.BUTTON_HOVER : ComputedEditorTheme.BUTTON_BACKGROUND;
         graphics.fill(x, y, x + width, y + 18, color);
@@ -1150,7 +1185,7 @@ public final class LuaNodeEditorScreen extends Screen {
                 label,
                 x + width / 2,
                 y + 5,
-                ComputedEditorTheme.TEXT_PRIMARY);
+                enabled ? ComputedEditorTheme.TEXT_PRIMARY : ComputedEditorTheme.TEXT_DISABLED);
     }
 
     private static boolean contains(

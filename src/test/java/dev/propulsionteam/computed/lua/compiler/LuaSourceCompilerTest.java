@@ -35,6 +35,9 @@ class LuaSourceCompilerTest {
         assertThrows(LuaCompilationException.class, () -> compiler.compile(1, "local ="));
         assertThrows(
                 LuaCompilationException.class,
+                () -> compiler.compile(1, "return { value = 0.1dd }"));
+        assertThrows(
+                LuaCompilationException.class,
                 () -> compiler.compile(1, "x".repeat(LuaSourceCompiler.MAX_SOURCE_BYTES + 1)));
     }
 }

@@ -49,10 +49,14 @@ public final class IntegrationLuaLibrary {
             if (stream == null) {
                 throw new IllegalStateException("Missing integration Lua definition: " + path);
             }
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            return normalizeLineEndings(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
         } catch (IOException exception) {
             throw new IllegalStateException("Could not read integration Lua definition: " + path, exception);
         }
+    }
+
+    private static String normalizeLineEndings(String source) {
+        return source.replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private record Entry(String id, String resource) {}

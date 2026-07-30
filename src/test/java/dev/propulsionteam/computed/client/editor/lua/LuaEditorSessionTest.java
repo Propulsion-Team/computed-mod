@@ -37,5 +37,11 @@ class LuaEditorSessionTest {
         assertNotNull(editor.snapshot().lastValidDefinition());
         assertTrue(editor.snapshot().stalePreview());
         assertFalse(editor.snapshot().diagnostics().isEmpty());
+
+        editor.sourceChanged("return { value = 0.1dd }", 3000);
+        assertTrue(editor.update(3250));
+        assertNull(editor.snapshot().currentDefinition());
+        assertNotNull(editor.snapshot().lastValidDefinition());
+        assertFalse(editor.snapshot().diagnostics().isEmpty());
     }
 }

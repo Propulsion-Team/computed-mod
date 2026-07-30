@@ -58,7 +58,7 @@ public final class LuaSourceCompiler {
             return compilerGlobals.compilePrototype(
                     new java.io.StringReader(source),
                     "@computed/" + hash.substring(0, 12) + ".lua");
-        } catch (IOException | LuaError exception) {
+        } catch (IOException | LuaError | NumberFormatException exception) {
             throw new CompilationFailure(exception);
         }
     }
