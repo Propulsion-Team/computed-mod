@@ -20,6 +20,8 @@ import org.luaj.vm2.LuaValue;
 final class LuaNodeFieldControl {
     static final int ROW_HEIGHT = 18;
     static final int CONTROL_WIDTH = 76;
+    private static final int SLIDER_VALUE_WIDTH = 34;
+    private static final int SLIDER_GAP = 2;
 
     private static final List<String> DIRECTIONS =
             List.of("front", "back", "left", "right", "up", "down");
@@ -71,12 +73,13 @@ final class LuaNodeFieldControl {
             renderBoolean(graphics, controlX, controlY, hovered, accent);
         } else if (schema.type() == FieldType.NUMBER
                 && schema.control() == FieldControl.SLIDER) {
-            renderSlider(graphics, controlX, controlY, hovered, accent);
+            renderSlider(graphics, controlX, controlY, mouseX, mouseY, accent);
         } else if (schema.type() == FieldType.CHOICE
                 || schema.type() == FieldType.DIRECTION) {
             renderDropdown(graphics, controlX, controlY, hovered, accent);
         } else {
-            renderValueBox(graphics, controlX, controlY, hovered, accent);
+            renderValueBox(
+                    graphics, controlX, controlY, CONTROL_WIDTH, hovered, accent);
         }
         if (expanded) {
             renderDropdownOverlay(
@@ -137,8 +140,23 @@ final class LuaNodeFieldControl {
         }
         if (schema.type() == FieldType.NUMBER
                 && schema.control() == FieldControl.SLIDER) {
-            dragging = true;
-            setSlider(localX, controlX);
+            int sliderX = controlX + SLIDER_VALUE_WIDTH + SLIDER_GAP;
+            if (localX < controlX + SLIDER_VALUE_WIDTH) {
+                if (!focused) {
+                    textInput.focus(displayValue());
+                }
+                focused = true;
+                dragging = false;
+                textInput.click(textPosition(localX, controlX), Screen.hasShiftDown());
+            } else if (localX >= sliderX) {
+                if (focused) {
+                    commitBuffer();
+                }
+                focused = false;
+                textInput.blur();
+                dragging = true;
+                setSlider(localX, sliderX, sliderWidth());
+            }
             return true;
         }
         if (schema.type() == FieldType.CHOICE
@@ -169,7 +187,8 @@ final class LuaNodeFieldControl {
         if (!dragging || button != 0) {
             return false;
         }
-        setSlider(localX, nodeWidth - CONTROL_WIDTH - 9);
+        int sliderX = nodeWidth - CONTROL_WIDTH - 9 + SLIDER_VALUE_WIDTH + SLIDER_GAP;
+        setSlider(localX, sliderX, sliderWidth());
         return true;
     }
 
@@ -250,24 +269,34 @@ final class LuaNodeFieldControl {
     }
 
     private void renderSlider(
-            GuiGraphics graphics, int x, int y, boolean hovered, int accent) {
+            GuiGraphics graphics,
+            int x,
+            int y,
+            int mouseX,
+            int mouseY,
+            int accent) {
+        int sliderX = x + SLIDER_VALUE_WIDTH + SLIDER_GAP;
+        int sliderWidth = sliderWidth();
+        boolean valueHovered = mouseX >= x
+                && mouseX < x + SLIDER_VALUE_WIDTH
+                && mouseY >= y
+                && mouseY < y + 14;
+        boolean sliderHovered = mouseX >= sliderX
+                && mouseX < sliderX + sliderWidth
+                && mouseY >= y
+                && mouseY < y + 14;
         ComputedEditorStyle.drawField(
-                graphics, x, y, CONTROL_WIDTH, 14, dragging, hovered, accent);
+                graphics, sliderX, y, sliderWidth, 14, dragging, sliderHovered, accent);
+        renderValueBox(
+                graphics, x, y, SLIDER_VALUE_WIDTH, valueHovered, accent);
         double minimum = schema.minimum();
         double maximum = schema.maximum();
         double ratio = (value.todouble() - minimum) / (maximum - minimum);
-        int trackX = x + 4;
-        int trackWidth = CONTROL_WIDTH - 8;
-        graphics.fill(trackX, y + 9, trackX + trackWidth, y + 11, ComputedEditorTheme.BORDER_SUBTLE);
+        int trackX = sliderX + 4;
+        int trackWidth = sliderWidth - 8;
+        graphics.fill(trackX, y + 6, trackX + trackWidth, y + 8, ComputedEditorTheme.BORDER_SUBTLE);
         int knob = trackX + (int) Math.round(ratio * trackWidth);
-        graphics.fill(knob - 2, y + 7, knob + 2, y + 13, accent);
-        graphics.drawString(
-                Minecraft.getInstance().font,
-                formatNumber(value.todouble()),
-                x + 4,
-                y + 2,
-                ComputedEditorTheme.TEXT_PRIMARY,
-                false);
+        graphics.fill(knob - 2, y + 3, knob + 2, y + 11, accent);
     }
 
     private void renderDropdown(
@@ -291,9 +320,14 @@ final class LuaNodeFieldControl {
     }
 
     private void renderValueBox(
-            GuiGraphics graphics, int x, int y, boolean hovered, int accent) {
+            GuiGraphics graphics,
+            int x,
+            int y,
+            int width,
+            boolean hovered,
+            int accent) {
         ComputedEditorStyle.drawField(
-                graphics, x, y, CONTROL_WIDTH, 14, focused, hovered, accent);
+                graphics, x, y, width, 14, focused, hovered, accent);
         if (schema.type() == FieldType.COLOR) {
             graphics.fill(x + 2, y + 2, x + 13, y + 12, (int) (long) value.todouble());
         }
@@ -301,7 +335,7 @@ final class LuaNodeFieldControl {
         int textX = schema.type() == FieldType.COLOR ? x + 16 : x + 4;
         String visible = Minecraft.getInstance().font.plainSubstrByWidth(
                 display,
-                x + CONTROL_WIDTH - 3 - textX);
+                x + width - 3 - textX);
         graphics.drawString(
                 Minecraft.getInstance().font,
                 visible,
@@ -371,10 +405,14 @@ final class LuaNodeFieldControl {
         graphics.pose().popPose();
     }
 
-    private void setSlider(double localX, int controlX) {
-        double ratio = Math.max(0, Math.min(1, (localX - controlX - 4) / (CONTROL_WIDTH - 8.0)));
+    private void setSlider(double localX, int controlX, int width) {
+        double ratio = Math.max(0, Math.min(1, (localX - controlX - 4) / (width - 8.0)));
         double number = schema.minimum() + ratio * (schema.maximum() - schema.minimum());
         value = LuaFieldValues.normalize(schema, LuaValue.valueOf(number));
+    }
+
+    private static int sliderWidth() {
+        return CONTROL_WIDTH - SLIDER_VALUE_WIDTH - SLIDER_GAP;
     }
 
     private void commitBuffer() {

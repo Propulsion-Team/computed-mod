@@ -20,7 +20,16 @@ class ConfigurableNodePortsTest {
         assertEquals(ConnectionType.BOOLEAN, ports.getLast().type());
         ports = ConfigurableNodePorts.add(ConfigurableNodePorts.EVENT_SENDER, ports);
         assertEquals("data_2", ports.getLast().id());
-        assertEquals(ConnectionType.BOOLEAN, ports.getLast().type());
+        assertEquals(ConnectionType.NUMBER, ports.getLast().type());
+        ports = ConfigurableNodePorts.cycleType(
+                ConfigurableNodePorts.EVENT_SENDER, ports, "data_1");
+        assertEquals(
+                List.of(ConnectionType.STRING, ConnectionType.NUMBER),
+                ConfigurableNodePorts.dynamicPorts(
+                                ConfigurableNodePorts.EVENT_SENDER, ports)
+                        .stream()
+                        .map(PortSnapshot::type)
+                        .toList());
         ports = ConfigurableNodePorts.removeLast(
                 ConfigurableNodePorts.EVENT_SENDER, ports);
         assertEquals(List.of("data_1"), ConfigurableNodePorts.dynamicPorts(

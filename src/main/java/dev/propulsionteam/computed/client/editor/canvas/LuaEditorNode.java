@@ -108,6 +108,8 @@ public final class LuaEditorNode extends WNode {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         BedrockNodeRenderer.render(graphics, this, category, false, false, mouseX, mouseY);
         int accent = NodePalette.category(category).frameArgb();
+        payloadTypeControls().forEach(control ->
+                control.render(graphics, getX(), getY(), getWidth(), mouseX, mouseY));
         int fieldsY = getY() + fieldsTop();
         List<LuaNodeFieldControl> visible = visibleFieldControls();
         for (int index = 0; index < visible.size(); index++) {
@@ -156,7 +158,9 @@ public final class LuaEditorNode extends WNode {
                 && mouseX < getWidth() - 6
                 && mouseY >= first
                 && mouseY < first + visible.size() * LuaNodeFieldControl.ROW_HEIGHT;
-        return fieldHit || configurablePorts()
+        boolean payloadTypeHit = payloadTypeControls().stream()
+                .anyMatch(control -> control.contains(mouseX, mouseY, getWidth()));
+        return fieldHit || payloadTypeHit || configurablePorts()
                 && mouseX >= 6
                 && mouseX < getWidth() - 6
                 && mouseY >= portControlsTop()
@@ -165,6 +169,10 @@ public final class LuaEditorNode extends WNode {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && handlePayloadTypeClick(mouseX, mouseY)) {
+            clearElementFocus();
+            return true;
+        }
         if (configurablePorts()
                 && handlePortControlsClick(mouseX, mouseY, button)) {
             clearElementFocus();
@@ -345,16 +353,28 @@ public final class LuaEditorNode extends WNode {
                 source.definitionId(), ports);
         String text = ConfigurableNodePorts.MONITOR.equals(source.definitionId())
                 ? "Widgets " + dynamic.size()
-                : "Payload " + dynamic.size() + " · " + dynamic.getLast().type().name();
-        drawPortButton(
-                graphics,
-                typeX,
-                y,
-                Math.max(20, getWidth() - (typeX - getX()) - 8),
-                text,
-                mouseX,
-                mouseY,
-                accent);
+                : "Payloads " + dynamic.size();
+        int labelWidth = Math.max(20, getWidth() - (typeX - getX()) - 8);
+        if (ConfigurableNodePorts.MONITOR.equals(source.definitionId())) {
+            drawPortButton(
+                    graphics,
+                    typeX,
+                    y,
+                    labelWidth,
+                    text,
+                    mouseX,
+                    mouseY,
+                    accent);
+        } else {
+            graphics.fill(typeX, y, typeX + labelWidth, y + 14, 0xFF1C1C1C);
+            graphics.renderOutline(typeX, y, labelWidth, 14, 0xFF3E3E3E);
+            graphics.drawCenteredString(
+                    net.minecraft.client.Minecraft.getInstance().font,
+                    text,
+                    typeX + labelWidth / 2,
+                    y + 3,
+                    0xFFA0A39C);
+        }
     }
 
     private void drawPortButton(
@@ -387,7 +407,9 @@ public final class LuaEditorNode extends WNode {
             ports = ConfigurableNodePorts.removeLast(source.definitionId(), ports);
         } else if (mouseX >= 32 && mouseX < 52) {
             ports = ConfigurableNodePorts.add(source.definitionId(), ports);
-        } else if (mouseX >= 56 && mouseX < getWidth() - 8) {
+        } else if (ConfigurableNodePorts.MONITOR.equals(source.definitionId())
+                && mouseX >= 56
+                && mouseX < getWidth() - 8) {
             ports = ConfigurableNodePorts.cycleLastType(source.definitionId(), ports);
         } else {
             return false;
@@ -395,6 +417,42 @@ public final class LuaEditorNode extends WNode {
         rebuildPins();
         updateLayout();
         return true;
+    }
+
+    private boolean handlePayloadTypeClick(double mouseX, double mouseY) {
+        for (EventPayloadTypeControl control : payloadTypeControls()) {
+            if (control.contains(mouseX, mouseY, getWidth())) {
+                ports = ConfigurableNodePorts.cycleType(
+                        source.definitionId(), ports, control.portId());
+                rebuildPins();
+                updateLayout();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<EventPayloadTypeControl> payloadTypeControls() {
+        if (!ConfigurableNodePorts.EVENT_SENDER.equals(source.definitionId())
+                && !ConfigurableNodePorts.EVENT_RECEIVER.equals(source.definitionId())) {
+            return List.of();
+        }
+        List<PortSnapshot> dynamic =
+                ConfigurableNodePorts.dynamicPorts(source.definitionId(), ports);
+        List<EventPayloadTypeControl> controls = new ArrayList<>();
+        for (PortSnapshot payload : dynamic) {
+            int directionIndex = 0;
+            for (PortSnapshot port : ports) {
+                if (port.equals(payload)) {
+                    break;
+                }
+                if (port.direction() == payload.direction()) {
+                    directionIndex++;
+                }
+            }
+            controls.add(new EventPayloadTypeControl(payload, directionIndex));
+        }
+        return List.copyOf(controls);
     }
 
     private List<LuaNodeFieldControl> visibleFieldControls() {

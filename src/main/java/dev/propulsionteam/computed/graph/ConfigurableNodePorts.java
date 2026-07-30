@@ -59,9 +59,7 @@ public final class ConfigurableNodePorts {
                 .mapToInt(port -> suffix(port.id(), prefix(definitionId)))
                 .max()
                 .orElse(0) + 1;
-        ConnectionType type = MONITOR.equals(definitionId)
-                ? ConnectionType.WIDGET
-                : dynamic.isEmpty() ? defaultType(definitionId) : dynamic.getLast().type();
+        ConnectionType type = defaultType(definitionId);
         List<PortSnapshot> updated = new ArrayList<>(current);
         updated.add(newPort(definitionId, next, type));
         return List.copyOf(updated);
@@ -80,14 +78,25 @@ public final class ConfigurableNodePorts {
 
     public static List<PortSnapshot> cycleLastType(
             String definitionId, List<PortSnapshot> current) {
-        if (MONITOR.equals(definitionId)) {
-            return List.copyOf(current);
-        }
         List<PortSnapshot> dynamic = dynamicPorts(definitionId, current);
         if (dynamic.isEmpty()) {
             return List.copyOf(current);
         }
-        PortSnapshot selected = dynamic.getLast();
+        return cycleType(definitionId, current, dynamic.getLast().id());
+    }
+
+    public static List<PortSnapshot> cycleType(
+            String definitionId, List<PortSnapshot> current, String portId) {
+        if (MONITOR.equals(definitionId)) {
+            return List.copyOf(current);
+        }
+        PortSnapshot selected = dynamicPorts(definitionId, current).stream()
+                .filter(port -> port.id().equals(portId))
+                .findFirst()
+                .orElse(null);
+        if (selected == null) {
+            return List.copyOf(current);
+        }
         int typeIndex = PAYLOAD_TYPES.indexOf(selected.type());
         ConnectionType next = PAYLOAD_TYPES.get((Math.max(0, typeIndex) + 1) % PAYLOAD_TYPES.size());
         PortSnapshot replacement = new PortSnapshot(
