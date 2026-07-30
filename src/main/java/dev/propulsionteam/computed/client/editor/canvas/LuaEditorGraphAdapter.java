@@ -260,6 +260,22 @@ public final class LuaEditorGraphAdapter {
                 updated.metadata());
     }
 
+    public static ComputedProgramV3 removeDefinitionAndInstances(ComputedProgramV3 program, String definitionId) {
+        LuaDefinitionSource source = program.library().get(definitionId);
+        if (source == null || source.origin() != LuaDefinitionSource.Origin.EMBEDDED) {
+            throw new IllegalArgumentException("Only embedded definitions can be deleted");
+        }
+        Set<UUID> removed = program.rootGraph().nodes().stream()
+                .filter(node -> node.definitionId().equals(definitionId)).map(GraphNode::id)
+                .collect(java.util.stream.Collectors.toSet());
+        List<GraphNode> nodes = program.rootGraph().nodes().stream().filter(node -> !removed.contains(node.id())).toList();
+        List<GraphConnection> connections = program.rootGraph().connections().stream()
+                .filter(connection -> !removed.contains(connection.sourceNode()) && !removed.contains(connection.targetNode())).toList();
+        Map<String, LuaDefinitionSource> library = new LinkedHashMap<>(program.library()); library.remove(definitionId);
+        Map<UUID, net.minecraft.nbt.CompoundTag> state = new LinkedHashMap<>(program.persistentState()); removed.forEach(state::remove);
+        return new ComputedProgramV3(program.revision(), new ComputedGraph(program.rootGraph().id(), nodes, connections), library, state, program.metadata());
+    }
+
     public static LuaEditorNode duplicateEditorNode(LuaEditorNode source, int x, int y) {
         GraphNode original = source.source();
         GraphNode duplicate = new GraphNode(

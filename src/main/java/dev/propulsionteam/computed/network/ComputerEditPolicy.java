@@ -62,6 +62,15 @@ public final class ComputerEditPolicy {
         return fieldValues(candidate);
     }
 
+    public static String computerType(ComputedProgramV3 candidate, boolean creativeComputer) {
+        if (!creativeComputer
+                && candidate.rootGraph().nodes().stream()
+                        .anyMatch(node -> node.definitionId().equals("computed:command"))) {
+            return "Run Command is only available on a Creative Computer";
+        }
+        return null;
+    }
+
     private static String fieldValues(ComputedProgramV3 candidate) {
         Map<String, LuaDefinitionSource> sources = new LinkedHashMap<>(BundledLuaLibrary.load());
         sources.putAll(IntegrationLuaLibrary.load());

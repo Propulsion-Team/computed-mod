@@ -218,7 +218,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity
     }
 
     private String validateProgram(ComputedProgramV3 candidate) {
-        return ComputerEditPolicy.programShape(candidate);
+        String shapeError = ComputerEditPolicy.programShape(candidate);
+        return shapeError != null
+                ? shapeError
+                : ComputerEditPolicy.computerType(candidate, isCreativeComputer());
     }
 
     private static ComputedProgramV3 preserveRuntimeState(
@@ -499,6 +502,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity
 
     @Override
     public void runCommand(String commandText) {
+        if (!isCreativeComputer()) {
+            throw new IllegalStateException(
+                    "Run Command is only available on a Creative Computer");
+        }
         if (commandText == null
                 || commandText.isBlank()
                 || !(level instanceof ServerLevel serverLevel)
@@ -518,6 +525,10 @@ public class ComputerBlockEntity extends BaseContainerBlockEntity
                 .withPermission(4)
                 .withSuppressedOutput();
         server.getCommands().performPrefixedCommand(source, command);
+    }
+
+    public boolean isCreativeComputer() {
+        return getBlockState().is(ComputedRegistries.CREATIVE_COMPUTER_BLOCK.get());
     }
 
     @Override

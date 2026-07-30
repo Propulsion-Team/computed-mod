@@ -101,4 +101,28 @@ class ComputerEditPolicyTest {
         assertTrue(ComputerEditPolicy.programShape(wrongTypeProgram).contains("invalid"));
         assertTrue(ComputerEditPolicy.programShape(extraFieldProgram).contains("undeclared"));
     }
+
+    @Test
+    void restrictsRunCommandToCreativeComputers() {
+        var definition = BundledLuaLibrary.load().get("computed:command");
+        GraphNode command = new GraphNode(
+                UUID.randomUUID(),
+                definition.id(),
+                definition.hash(),
+                0,
+                0,
+                List.of(),
+                Map.of());
+        ComputedProgramV3 program = new ComputedProgramV3(
+                0,
+                new ComputedGraph(UUID.randomUUID(), List.of(command), List.of()),
+                Map.of(),
+                Map.of(),
+                null);
+
+        assertTrue(ComputerEditPolicy.computerType(program, false).contains("Creative Computer"));
+        assertNull(ComputerEditPolicy.computerType(program, true));
+        assertNull(ComputerEditPolicy.computerType(
+                ComputedProgramV3.empty(UUID.randomUUID()), false));
+    }
 }

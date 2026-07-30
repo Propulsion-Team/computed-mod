@@ -81,7 +81,7 @@ Signature: `(face: string, level: number) -> ()`. Runs on the computer thread, c
 
 ## computed:command/run
 
-Signature: `(string) -> ()`. Runs on the computer thread, does not yield, performs a command side effect, and is unavailable in preview. Errors on a missing host, invalid argument, or command failure. Example: `ctx:endpoint("computed:command"):call("run", "say hello")`.
+Signature: `(string) -> ()`. Available only on a Creative Computer. Runs on the computer thread, does not yield, performs a command side effect, and is unavailable in preview. Errors on a normal Computer, missing host, invalid argument, or command failure. Example: `ctx:endpoint("computed:command"):call("run", "say hello")`.
 
 ## computed:widget/text
 

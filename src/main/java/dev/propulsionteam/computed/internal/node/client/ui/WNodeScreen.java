@@ -15,8 +15,10 @@ import dev.propulsionteam.computed.internal.node.client.editor.PointerGestureCla
 import dev.propulsionteam.computed.internal.node.client.editor.WireEditorController;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -98,6 +100,14 @@ public class WNodeScreen extends Screen {
 
     protected WNode createDuplicateNode(WNode source, int x, int y) {
         return null;
+    }
+
+    protected boolean copySelectedNodesToClipboard() {
+        return false;
+    }
+
+    protected boolean pasteNodesFromClipboard(int graphX, int graphY) {
+        return false;
     }
 
     protected void persistEditorViewport(String contextKey) {}
@@ -182,6 +192,25 @@ public class WNodeScreen extends Screen {
         return graph.getNodes().stream().anyMatch(WNode::isSelected);
     }
 
+    protected final Set<UUID> selectedCanvasNodeIds() {
+        Set<UUID> ids = new HashSet<>();
+        selectedNodes().forEach(node -> ids.add(node.getId()));
+        return Set.copyOf(ids);
+    }
+
+    protected final void selectCanvasNodes(Set<UUID> nodeIds) {
+        clearSelection();
+        if (nodeIds == null || nodeIds.isEmpty()) {
+            return;
+        }
+        for (WNode node : graph.getNodes()) {
+            if (nodeIds.contains(node.getId())) {
+                node.setSelected(true);
+                selectedNode = node;
+            }
+        }
+    }
+
     protected final boolean selectNodeAtGraphPoint(int graphX, int graphY) {
         WNode node = topNodeAt(graphX, graphY);
         if (node == null) {
@@ -203,13 +232,36 @@ public class WNodeScreen extends Screen {
         checkpoint();
         clearSelection();
         WNode last = null;
+        Map<UUID, UUID> replacements = new HashMap<>();
         for (WNode source : selected) {
             WNode copy = createDuplicateNode(source, source.getX() + 24, source.getY() + 24);
             if (copy != null) {
                 graph.addNode(copy);
                 copy.setSelected(true);
+                replacements.put(source.getId(), copy.getId());
                 last = copy;
             }
+        }
+        List<WConnection> internalConnections = graph.getConnections().stream()
+                .filter(connection -> replacements.containsKey(connection.sourceNode())
+                        && replacements.containsKey(connection.targetNode()))
+                .toList();
+        for (WConnection connection : internalConnections) {
+            int[] xs = connection.waypointXs().clone();
+            int[] ys = connection.waypointYs().clone();
+            for (int index = 0; index < Math.min(xs.length, ys.length); index++) {
+                xs[index] += 24;
+                ys[index] += 24;
+            }
+            graph.connect(new WConnection(
+                    replacements.get(connection.sourceNode()),
+                    connection.sourcePin(),
+                    replacements.get(connection.targetNode()),
+                    connection.targetPin(),
+                    xs,
+                    ys,
+                    connection.sourcePortKey(),
+                    connection.targetPortKey()));
         }
         selectedNode = last;
     }
@@ -619,6 +671,22 @@ public class WNodeScreen extends Screen {
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_A) {
             graph.getNodes().forEach(node -> node.setSelected(true));
             return true;
+        }
+        if (hasControlDown() && keyCode == GLFW.GLFW_KEY_C) {
+            if (copySelectedNodesToClipboard()) {
+                return true;
+            }
+        }
+        if (hasControlDown() && keyCode == GLFW.GLFW_KEY_X) {
+            if (copySelectedNodesToClipboard()) {
+                removeSelectedNodes();
+                return true;
+            }
+        }
+        if (hasControlDown() && keyCode == GLFW.GLFW_KEY_V) {
+            if (pasteNodesFromClipboard(screenToGraphX(mouseX), screenToGraphY(mouseY))) {
+                return true;
+            }
         }
         if (hasControlDown() && keyCode == GLFW.GLFW_KEY_D) {
             cloneSelectedNodes();

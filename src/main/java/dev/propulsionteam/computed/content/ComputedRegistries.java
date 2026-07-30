@@ -11,7 +11,6 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
-import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -101,7 +100,6 @@ public final class ComputedRegistries {
                     "main",
                     () -> CreativeModeTab.builder()
                             .title(Component.translatable("itemGroup.computed"))
-                            .withTabsBefore(CreativeModeTabs.REDSTONE_BLOCKS)
                             .icon(() -> COMPUTER_BLOCK_ITEM.get().getDefaultInstance())
                             .displayItems((parameters, output) -> {
                                 output.accept(COMPUTER_BLOCK_ITEM.get());
